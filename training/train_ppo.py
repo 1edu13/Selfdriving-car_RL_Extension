@@ -14,7 +14,7 @@ def train():
     run_name = "ppo_baseline"
     env_id = "CarRacing-v2"
     seed = 42
-    total_timesteps = 3000000
+    total_timesteps = 300000
     learning_rate = 3e-4
     num_envs = 8
     num_steps = 1024
