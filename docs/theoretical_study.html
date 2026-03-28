@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>theoretical_study.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+<link rel="stylesheet" href="file:///c%3A/Users/emped/OneDrive/Documentos/MIS%20COSAS/Yo/3%20CURSO/Selfdriving-car_RL_Extension/docs/markdown-pdf%20styles" type="text/css">
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-AMS-MML_HTMLorMML" type="text/javascript"></script>
+<script type="text/x-mathjax-config">
+    MathJax.Hub.Config({ tex2jax: {inlineMath: [['$', '$']]}, messageStyle: "none" });
+</script>
+<script type="text/x-mathjax-config">
+    MathJax.Hub.Config({ tex2jax: {inlineMath: [['$', '$']]}, messageStyle: "none" });
+</script>
+<script type="text/x-mathjax-config">
+    MathJax.Hub.Config({ tex2jax: {inlineMath: [['$', '$']]}, messageStyle: "none" });
+</script>
+<script type="text/x-mathjax-config">
+    MathJax.Hub.Config({ tex2jax: {inlineMath: [['$', '$']]}, messageStyle: "none" });
+</script>
+<script type="text/x-mathjax-config">
+    MathJax.Hub.Config({ tex2jax: {inlineMath: [['$', '$']]}, messageStyle: "none" });
+</script>
+<script type="text/x-mathjax-config">
+    MathJax.Hub.Config({ tex2jax: {inlineMath: [['$', '$']]}, messageStyle: "none" });
+</script>
+<div style="text-align: justify; margin-top: 40px; margin-bottom: 60px;">
+<img src="logo.png" style="float: right; width: 250px;" alt="Logo VUT">
+<p><br><br></p>
+<h1 id="technical-report-advanced-off-policy-methods-in-deep-reinforcement-learning">Technical Report: Advanced Off-Policy Methods in Deep Reinforcement Learning</h1>
+<p><strong>Author:</strong> Eduardo Martín Postigo
+<strong>Subject:</strong> Comparative Analysis of DQN, TD3, and SAC</p>
+<h2 id="1-introduction">1. Introduction</h2>
+<p>Modern Deep Reinforcement Learning (DRL) has evolved from simple tabular methods to complex architectures capable of handling high-dimensional state spaces and continuous action domains. This report examines the transition from value-based discrete methods to state-of-the-art actor-critic stochastic frameworks, focusing on the mechanical improvements that provide stability and efficiency.</p>
+<hr>
+<h2 id="2-core-definitions">2. Core Definitions</h2>
+<p>To classify any Reinforcement Learning algorithm, we evaluate it across these four fundamental dimensions.</p>
+<h3 id="a-action-spaces">A. Action Spaces</h3>
+<ul>
+<li><strong>Discrete:</strong> The agent chooses from a finite, fixed set of actions.
+<ul>
+<li><em>LaTeX:</em> $a \in {0, 1, ..., n-1}$.</li>
+<li><em>Analogy:</em> Using a D-pad or a keyboard (binary choices).</li>
+</ul>
+</li>
+<li><strong>Continuous:</strong> The agent outputs real-valued vectors, allowing for infinite precision within bounds.
+<ul>
+<li><em>LaTeX:</em> $a \in \mathbb{R}^d$ typically within $[-1, 1]$.</li>
+<li><em>Analogy:</em> Using a steering wheel or a throttle pedal (gradient choices).</li>
+</ul>
+</li>
+</ul>
+<h3 id="b-policy-types-the-decision-logic">B. Policy Types (The Decision Logic)</h3>
+<ul>
+<li><strong>Deterministic:</strong> Maps a state directly to a single, specific action.
+<ul>
+<li><em>Formula:</em> $a = \mu(s)$.</li>
+<li><em>Behavior:</em> Exploitative and precise; requires external noise (like Gaussian) to explore.</li>
+</ul>
+</li>
+<li><strong>Stochastic:</strong> Maps a state to a probability distribution (usually a Gaussian mean $\mu$ and variance $\sigma$).
+<ul>
+<li><em>Formula:</em> $a \sim \pi(a|s)$.</li>
+<li><em>Behavior:</em> Naturally exploratory; better for complex environments and handling uncertainty.</li>
+</ul>
+</li>
+</ul>
+<h3 id="c-paradigms-the-data-efficiency">C. Paradigms (The Data Efficiency)</h3>
+<ul>
+<li><strong>On-Policy:</strong> The agent learns only from data collected by its <em>current</em> version. Data is discarded after the update.
+<ul>
+<li><em>Example:</em> <strong>PPO</strong>.</li>
+<li><em>Trait:</em> Stable but &quot;expensive&quot; (requires constant new environment interactions).</li>
+</ul>
+</li>
+<li><strong>Off-Policy:</strong> The agent learns from a <strong>Replay Buffer</strong> containing experiences from past versions of itself.
+<ul>
+<li><em>Example:</em> <strong>DQN, SAC, TD3</strong>.</li>
+<li><em>Trait:</em> Highly sample-efficient; reuses data many times to squeeze out more learning.</li>
+</ul>
+</li>
+</ul>
+<h3 id="d-architectures-the-brain-structure">D. Architectures (The Brain Structure)</h3>
+<ul>
+<li><strong>Value-Based:</strong> Focuses exclusively on estimating the &quot;quality&quot; ($Q$) of every possible action. The policy is implicitly to &quot;pick the highest $Q$.&quot;
+<ul>
+<li><em>Constraint:</em> Hard to use in continuous spaces because you cannot calculate $\max$ over infinite values.</li>
+<li><em>Example:</em> <strong>DQN</strong>.</li>
+</ul>
+</li>
+<li><strong>Actor-Critic:</strong> Splits the model into two specialized networks.
+<ul>
+<li><strong>The Actor:</strong> Learns <em>how</em> to behave (the policy).</li>
+<li><strong>The Critic:</strong> Learns to estimate the value of the Actor's actions.</li>
+<li><em>Example:</em> <strong>DDPG, TD3, SAC, PPO</strong>.</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h2 id="2-comparative-methodology-overview">2. Comparative Methodology Overview</h2>
+<p>Once these few aspects are clarified, we can better understand the differences between each approach.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align:left"></th>
+<th style="text-align:left"><strong>DQN</strong></th>
+<th style="text-align:left"><strong>DDPG</strong></th>
+<th style="text-align:left"><strong>TD3</strong></th>
+<th style="text-align:left"><strong>SAC</strong></th>
+<th style="text-align:left"><strong>PPO</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><strong>Paradigm</strong></td>
+<td style="text-align:left">Off-Policy</td>
+<td style="text-align:left">Off-Policy</td>
+<td style="text-align:left">Off-Policy</td>
+<td style="text-align:left">Off-Policy</td>
+<td style="text-align:left">On-Policy</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Action Space</strong></td>
+<td style="text-align:left">Discrete</td>
+<td style="text-align:left">Continuous</td>
+<td style="text-align:left">Continuous</td>
+<td style="text-align:left">Continuous</td>
+<td style="text-align:left">Continuous</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Policy Type</strong></td>
+<td style="text-align:left">Deterministic</td>
+<td style="text-align:left">Deterministic</td>
+<td style="text-align:left">Deterministic</td>
+<td style="text-align:left"><strong>Stochastic</strong></td>
+<td style="text-align:left">Stochastic</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Architecture</strong></td>
+<td style="text-align:left">Value-Based</td>
+<td style="text-align:left">Actor-Critic</td>
+<td style="text-align:left">Actor-Critic</td>
+<td style="text-align:left">Actor-Critic</td>
+<td style="text-align:left">Actor-Critic</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Exploration</strong></td>
+<td style="text-align:left">$\epsilon$-greedy</td>
+<td style="text-align:left">Added Noise</td>
+<td style="text-align:left">Added Noise</td>
+<td style="text-align:left"><strong>Max Entropy</strong></td>
+<td style="text-align:left">Probability Dist.</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Stability</strong></td>
+<td style="text-align:left">Medium</td>
+<td style="text-align:left">Low</td>
+<td style="text-align:left">High</td>
+<td style="text-align:left"><strong>Very High</strong></td>
+<td style="text-align:left">High</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Sample Efficiency</strong></td>
+<td style="text-align:left">High</td>
+<td style="text-align:left">High</td>
+<td style="text-align:left">High</td>
+<td style="text-align:left"><strong>Very High</strong></td>
+<td style="text-align:left">Low</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="3-dqn-deep-q-networks-the-value-based-foundation">3. DQN: Deep Q-Networks (The Value-Based Foundation)</h2>
+<p>DQN represents the first major successful integration of Deep Learning with Reinforcement Learning. It was the breakthrough that allowed agents to move beyond simple grids and solve tasks with high-dimensional sensory inputs, such as raw pixels, by approximating the optimal action-value function $Q^*(s, a)$ using a neural network.</p>
+<hr>
+<h3 id="31-theoretical-framework">3.1 Theoretical Framework</h3>
+<p>DQN is fundamentally a <strong>Value-Based</strong> method. It does not learn a policy directly; instead, it learns to estimate the &quot;quality&quot; of taking a specific action in a specific state.</p>
+<h4 id="the-bellman-equation">The Bellman Equation</h4>
+<p>The agent improves its estimation by iteratively solving the Bellman Equation. The goal is to minimize the difference between the current Q-prediction and the &quot;Target&quot; (the immediate reward plus the discounted value of the next best state):</p>
+<p>$$Q(s, a) \leftarrow Q(s, a) + \alpha [r + \gamma \max_{a'} Q(s', a') - Q(s, a)]$$</p>
+<h4 id="the-loss-function">The Loss Function</h4>
+<p>To train the neural network (CNN), we minimize the <strong>Mean Squared Error (MSE)</strong> between our current prediction and the stable target:</p>
+<p>$$L(\theta) = \mathbb{E} \left[ ( \underbrace{r + \gamma \max_{a'} Q(s', a'; \theta^{-})}<em>{\text{Stable Target}} - \underbrace{Q(s, a; \theta)}</em>{\text{Current Prediction}} )^2 \right]$$</p>
+<ul>
+<li><strong>$\gamma$ (Gamma):</strong> The discount factor (usually 0.99).</li>
+<li><strong>$\theta$:</strong> Weights of the Policy Network.</li>
+<li><strong>$\theta^{-}$:</strong> Weights of the Target Network.</li>
+</ul>
+<hr>
+<h3 id="32-evolution-from-q-table-to-neural-network">3.2 Evolution: From Q-Table to Neural Network</h3>
+<p>The core shift in DQN is the <strong>representation of knowledge</strong>.</p>
+<ul>
+<li><strong>Q-Learning (The Table):</strong> Traditional RL uses a literal matrix (Q-Table). In a 96x96 pixel environment like <code>CarRacing-v2</code>, there are too many possible pixel combinations to store in a table.</li>
+<li><strong>DQN (The Approximator):</strong> Uses a <strong>Convolutional Neural Network (CNN)</strong> as a function approximator. The network takes the pixel stack as input and predicts the Q-values for all available actions simultaneously. This allows the agent to <strong>generalize</strong>—it learns that a &quot;red curb&quot; means a turn, even if it has never seen that exact pixel arrangement before.</li>
+</ul>
+<p><img src="image-1.png" alt="Figure 1: Comparison between traditional Tabular Q-Learning and Deep Q-Networks (DQN)">
+<em>Figure 1: Structural comparison between traditional Tabular Q-Learning and Deep Q-Networks (DQN). Traditional Q-Learning relies on an exhaustive lookup table, which becomes computationally infeasible for high-dimensional sensory inputs. In contrast, DQN utilizes a neural network (CNN) to approximate Q-values, enabling the agent to generalize patterns and features from raw pixel observations.</em>
+<strong>Source:</strong> <a href="https://medium.com/@mcomeshernandez/reinforcement-learning-diving-into-deep-q-networks-dqn-92f237f448ec">Marta Comes Hernandez (Medium)</a></p>
+<h3 id="33-the-three-pillars-of-stability">3.3 The Three Pillars of Stability</h3>
+<p>Standard neural networks are notoriously unstable when used for RL because the data is non-stationary (the agent's behavior changes as it learns). DQN solves this with three key mechanisms:</p>
+<h4 id="a-epsilon-greedy-strategy-exploration-vs-exploitation">A. Epsilon-Greedy Strategy (Exploration vs. Exploitation)</h4>
+<p>Since DQN is a deterministic value-based method, the agent would always take the same &quot;greedy&quot; action if not forced to explore.</p>
+<ul>
+<li><strong>Mechanism:</strong> With probability $\epsilon$, the agent chooses a random action (discovery); with probability $1-\epsilon$, it chooses the action with the highest predicted Q-value (mastery).</li>
+<li><strong>Decay:</strong> We start with $\epsilon = 1.0$ and slowly decrease it as the agent becomes more proficient.</li>
+</ul>
+<h4 id="b-experience-replay-the-replay-buffer">B. Experience Replay (The Replay Buffer)</h4>
+<p>In a driving simulation, consecutive frames are nearly identical. If the network learns from these frames in order, it suffers from &quot;catastrophic forgetting&quot; and high data correlation.</p>
+<ul>
+<li><strong>Mechanism:</strong> The agent stores its experiences $(s, a, r, s')$ in a large memory buffer.</li>
+<li><strong>Random Sampling:</strong> During training, we pull a random &quot;mini-batch&quot; of memories. This breaks the temporal link between frames and ensures the gradient updates are stable and diverse.</li>
+</ul>
+<h4 id="c-target-networks-the-anchor">C. Target Networks (The Anchor)</h4>
+<p>If we use the same network to calculate the prediction and the target, the target moves every time we update the weights. This creates a feedback loop that often leads to divergence.</p>
+<ul>
+<li><strong>Mechanism:</strong> DQN uses two networks:
+<ol>
+<li><strong>Policy Network ($\theta$):</strong> Updated every step; used to select actions.</li>
+<li><strong>Target Network ($\theta^{-}$):</strong> A frozen copy used to calculate the stable target. It is synchronized with the Policy Network only every $N$ steps.</li>
+</ol>
+</li>
+</ul>
+<h3 id="34-step-by-step-training-loop">3.4 Step-by-Step Training Loop</h3>
+<h3 id="dqn-training-process-schematic">DQN Training Process Schematic</h3>
+<ol>
+<li><strong>Initialization:</strong> Create the <strong>Policy Network</strong> with random weights.</li>
+<li><strong>Initial Sync:</strong> Copy weights from the Policy Network to the <strong>Target Network</strong> to start with identical states.</li>
+<li><strong>Navigation:</strong> The agent interacts with the <strong>Environment</strong> using an $\epsilon$-greedy strategy and stores experiences in the <strong>Replay Memory</strong>.</li>
+<li><strong>Prediction (Policy):</strong> The Policy Network predicts the current <strong>Q-values</strong> for the sampled state.</li>
+<li><strong>Reference (Target):</strong> The Target Network generates <strong>stable reference values</strong> for the next state.</li>
+<li><strong>Bellman Equation:</strong> Inputs from the previous steps are processed through the Bellman formula.</li>
+<li><strong>Set Target:</strong> Establish the <strong>&quot;Correct Answer&quot;</strong> (Target Vector) based on the Bellman calculation.</li>
+<li><strong>Optimization (Update):</strong> The <strong>Loss</strong> box calculates the discrepancy between the target and the current prediction, driving the <strong>Policy Network update</strong> via backpropagation.</li>
+<li><strong>Repetition:</strong> The loop (steps 3–8) repeats iteratively to refine the agent's strategy.</li>
+<li><strong>Synchronization:</strong> Periodically sync weights from the Policy Network to the Target Network to maintain training stability.</li>
+</ol>
+<p><img src="image-2.png" alt="Figure 2: Deep Q-Network (DQN) Training Loop and Information Flow">
+<em>Figure 1: Procedural architecture and data flow of a Deep Q-Network (DQN) training cycle.</em></p>
+<hr>
+<hr>
+<h2 id="4-ddpg--td3">4. DDPG &amp; TD3</h2>
+<h3 id="41-ddpg">4.1 DDPG:</h3>
+<p>DDPG was developed as a solution to the limitations of Deep Q-Networks (DQN) in continuous action spaces. While DQN relies on a discrete set of actions to calculate a maximum $Q$-value, DDPG utilizes an <strong>Actor-Critic</strong> architecture to output exact, continuous values.</p>
+<h4 id="architecture-and-components">Architecture and Components</h4>
+<ul>
+<li><strong>The Critic ($Q_{\theta}(s, a)$):</strong> Learns to approximate the state-action value function. It evaluates how &quot;good&quot; a specific action $a$ is in state $s$.</li>
+<li><strong>The Actor ($\mu_{\phi}(s)$):</strong> Learns a deterministic policy that maps states directly to a specific action vector (Steering, Gas, Brake).</li>
+</ul>
+<h4 id="the-learning-mechanism">The Learning Mechanism</h4>
+<p>DDPG updates the Actor by moving it in the direction of the gradient provided by the Critic. This is known as the <strong>Deterministic Policy Gradient</strong>:</p>
+<p>$$\nabla_{\phi} J \approx \nabla_a Q_{\theta}(s, a) \nabla_{\phi} \mu_{\phi}(s)$$</p>
+<p>The Critic is updated by minimizing the Mean Squared Error (MSE) against a target $y$:</p>
+<p>$$L = \mathbb{E} [(y - Q_{\theta}(s, a))^2]$$</p>
+<p>where the target is computed using target networks ($\theta', \phi'$) to maintain stability:</p>
+<p>$$y = r + \gamma Q_{\theta'}(s', \mu_{\phi'}(s'))$$</p>
+<hr>
+<h4 id="the-problem-overestimation-bias">The Problem: Overestimation Bias</h4>
+<p>A fundamental flaw in DDPG is <strong>Overestimation Bias</strong>. Because the algorithm consistently uses the maximum estimated value (or the action that the Actor believes yields the maximum value) to calculate targets, noise in the $Q$-function leads to a positive bias.</p>
+<p>Over time, these errors accumulate, causing the agent to develop &quot;delusions&quot; about the value of certain states. In the context of car racing, this often manifests as the agent getting stuck in local optima or failing to recover from high-speed turns due to inaccurate value estimations.</p>
+<hr>
+<h3 id="42-td3-improvements">4.2 TD3: Improvements</h3>
+<p>TD3 (Twin Delayed DDPG) introduces three specific mechanisms to address the instabilities of DDPG.</p>
+<h4 id="1-clipped-double-q-learning">1: Clipped Double Q-Learning</h4>
+<p>To combat overestimation, TD3 employs <strong>two independent Critic networks</strong> ($Q_{\theta_1}, Q_{\theta_2}$). When calculating the target value, it takes the <strong>minimum</strong> of the two estimates. This conservative approach prevents the agent from over-exploiting noisy $Q$-value peaks.</p>
+<p><strong>TD3 Target Definition:</strong>
+$$y = r + \gamma \min_{i=1,2} Q_{\theta'_i}(s', a')$$</p>
+<h4 id="2-delayed-policy-updates">2: Delayed Policy Updates</h4>
+<p>DDPG updates the Actor and Critic simultaneously at every step. However, if the Critic is still inaccurate, the Actor's update will be based on &quot;false&quot; information. TD3 addresses this by:</p>
+<ol>
+<li>Updating the <strong>Critics</strong> at every step.</li>
+<li>Updating the <strong>Actor</strong> and all <strong>Target Networks</strong> only every $d$ steps (typically $d=2$).</li>
+</ol>
+<p>This allows the value function to stabilize before the policy is allowed to change.</p>
+<h4 id="3-target-policy-smoothing">3: Target Policy Smoothing</h4>
+<p>Deterministic policies are prone to overfitting to narrow &quot;spikes&quot; in the $Q$-function. TD3 adds clipped random noise to the action used for the target calculation. This serves as a regularizer, forcing the Critic to learn that similar actions should yield similar rewards.</p>
+<p><strong>Smoothed Target Action:</strong>
+$$a' = \text{clip}(\mu_{\phi'}(s') + \epsilon, a_{low}, a_{high})$$
+$$\epsilon \sim \text{clip}(\mathcal{N}(0, \sigma), -c, c)$$</p>
+<hr>
+<h3 id="43-summary-comparison">4.3 Summary Comparison</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">Feature</th>
+<th style="text-align:left">DDPG</th>
+<th style="text-align:left">TD3</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><strong>Critics</strong></td>
+<td style="text-align:left">One Network</td>
+<td style="text-align:left">Two (Twin) Networks</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Target Logic</strong></td>
+<td style="text-align:left">$Q(s', \mu(s'))$</td>
+<td style="text-align:left">$\min(Q_1, Q_2)(s', a')$</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Update Cadence</strong></td>
+<td style="text-align:left">Simultaneous</td>
+<td style="text-align:left">Delayed Policy Updates</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Policy Robustness</strong></td>
+<td style="text-align:left">Susceptible to $Q$-spikes</td>
+<td style="text-align:left">Target Policy Smoothing</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Performance</strong></td>
+<td style="text-align:left">High variance</td>
+<td style="text-align:left">Stable &amp; Robust</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="4-soft-actor-critic-sac-maximum-entropy-framework">4. Soft Actor-Critic (SAC): Maximum Entropy Framework</h2>
+<p>SAC is an off-policy actor-critic algorithm that utilizes a stochastic policy. It is distinguished by its focus on <strong>Maximum Entropy Reinforcement Learning</strong>.</p>
+<h3 id="41-entropy-regularization">4.1 Entropy Regularization</h3>
+<p>Instead of just maximizing the expected reward, SAC aims to maximize the reward plus the entropy ($\mathcal{H}$) of the policy. Entropy represents the &quot;randomness&quot; or &quot;uncertainty&quot; of the agent's choices.
+$$J(\pi) = \sum_{t=0}^{T} \mathbb{E}<em>{(s_t, a_t) \sim \rho</em>\pi} [r(s_t, a_t) + \alpha \mathcal{H}(\pi(\cdot|s_t))]$$</p>
+<h3 id="42-key-advantages">4.2 Key Advantages</h3>
+<ul>
+<li><strong>Automatic Exploration:</strong> The agent is incentivized to explore all possible actions that lead to high rewards, preventing premature convergence to local optima.</li>
+<li><strong>Robustness:</strong> Because the policy is stochastic, it is naturally more robust to noise and changes in environment dynamics compared to deterministic methods like TD3.</li>
+<li><strong>Reparameterization Trick:</strong> To allow backpropagation through stochastic sampling, SAC expresses the action as a deterministic function of the state and independent noise: $a = f_{\theta}(\epsilon, s)$.</li>
+</ul>
+<hr>
+<h2 id="5-comparative-analysis">5. Comparative Analysis</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">Feature</th>
+<th style="text-align:left">DQN</th>
+<th style="text-align:left">TD3</th>
+<th style="text-align:left">SAC</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><strong>Action Space</strong></td>
+<td style="text-align:left">Discrete</td>
+<td style="text-align:left">Continuous</td>
+<td style="text-align:left">Continuous</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Policy Nature</strong></td>
+<td style="text-align:left">Deterministic</td>
+<td style="text-align:left">Deterministic</td>
+<td style="text-align:left">Stochastic</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Stability Strategy</strong></td>
+<td style="text-align:left">Target Network</td>
+<td style="text-align:left">Clipped Double-Q</td>
+<td style="text-align:left">Entropy Regularization</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>Exploration</strong></td>
+<td style="text-align:left">$\epsilon$-greedy</td>
+<td style="text-align:left">Additive Noise</td>
+<td style="text-align:left">Entropy Maximization</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="6-conclusion">6. Conclusion</h2>
+<p>The progression from DQN to SAC shows a shift from stabilizing value targets toward stabilizing the exploration process itself. DQN introduced the necessary infrastructure (Buffers and Targets), TD3 refined the value estimation through pessimism (Clipped Q), and SAC integrated exploration directly into the mathematical objective through Entropy. Understanding these differences allows researchers to select the most appropriate tool based on the complexity and continuity of the task at hand.</p>
+<h2 id="4-the-evolutionary-journey-why-we-moved-forward">4. The Evolutionary Journey: Why we moved forward</h2>
+<h3 id="1-dqn-to-ddpg-crossing-the-continuous-gap">1. DQN to DDPG: Crossing the Continuous Gap</h3>
+<p>DQN was limited to buttons. <strong>DDPG</strong> introduced the Actor-Critic framework to off-policy learning, allowing for &quot;pedal&quot; control. However, DDPG was prone to &quot;divergence&quot;—it would often learn a bad policy and never recover because its Critic was too optimistic.</p>
+<h3 id="2-ddpg-to-td3-implementing-%22pessimism%22">2. DDPG to TD3: Implementing &quot;Pessimism&quot;</h3>
+<p><strong>TD3</strong> fixed DDPG by adding three stability mechanisms:</p>
+<ul>
+<li><strong>Clipped Double-Q:</strong> Using two critics and taking the minimum prevents the agent from overestimating how good a state is.</li>
+<li><strong>Target Policy Smoothing:</strong> Adding noise to targets prevents the actor from exploiting sharp &quot;peaks&quot; in the value function.</li>
+<li><strong>Update Rule:</strong> $$y = r + \gamma \min_{i=1,2} Q_{\theta_{target, i}}(s', \mu_{\phi_{target}}(s') + \epsilon)$$</li>
+</ul>
+<h3 id="3-td3-to-sac-embracing-randomness-entropy">3. TD3 to SAC: Embracing Randomness (Entropy)</h3>
+<p>While TD3 is precise, it can be rigid. <strong>SAC</strong> introduced <strong>Entropy Regularization</strong>. Instead of just trying to get a high score, SAC tries to get a high score while being as &quot;random&quot; as possible.</p>
+<ul>
+<li><strong>Entropy ($\mathcal{H}$):</strong> This ensures the agent never stops exploring until it is absolutely certain of the optimal path.</li>
+<li><strong>Objective:</strong> $$J(\pi) = \sum_{t=0}^{T} \mathbb{E} [r(s_t, a_t) + \alpha \mathcal{H}(\pi(\cdot|s_t))]$$</li>
+</ul>
+<hr>
+<h2 id="5-summary-for-students">5. Summary for Students</h2>
+<ul>
+<li>If your task is <strong>discrete</strong> (like Chess): Use <strong>DQN</strong>.</li>
+<li>If you need <strong>simple, reliable</strong> continuous control and have time to train: Use <strong>PPO</strong>.</li>
+<li>If you need <strong>maximum efficiency</strong> and robust exploration in continuous space: Use <strong>SAC</strong>.</li>
+<li>If you need <strong>deterministic precision</strong> (robotics): Use <strong>TD3</strong>.</li>
+</ul>
+
+</body>
+</html>

@@ -88,11 +88,11 @@ Once these few aspects are clarified, we can better understand the differences b
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Paradigm** | Off-Policy | Off-Policy | Off-Policy | Off-Policy | On-Policy |
 | **Action Space** | Discrete | Continuous | Continuous | Continuous | Continuous |
-| **Policy Type** | Deterministic | Deterministic | Deterministic | **Stochastic** | Stochastic |
+| **Policy Type** | Deterministic | Deterministic | Deterministic | Stochastic | Stochastic |
 | **Architecture** | Value-Based | Actor-Critic | Actor-Critic | Actor-Critic | Actor-Critic |
-| **Exploration** | $\epsilon$-greedy | Added Noise | Added Noise | **Max Entropy** | Probability Dist. |
-| **Stability** | Medium | Low | High | **Very High** | High |
-| **Sample Efficiency**| High | High | High | **Very High** | Low |
+| **Exploration** | $\epsilon$-greedy | Added Noise | Added Noise | Max Entropy | Probability Dist. |
+| **Stability** | Medium | Low | High | Very High | High |
+| **Sample Efficiency**| High | High | High | Very High | Low |
 
 
 ---
@@ -100,9 +100,17 @@ Once these few aspects are clarified, we can better understand the differences b
 
 DQN represents the first major successful integration of Deep Learning with Reinforcement Learning. It was the breakthrough that allowed agents to move beyond simple grids and solve tasks with high-dimensional sensory inputs, such as raw pixels, by approximating the optimal action-value function $Q^*(s, a)$ using a neural network.
 
----
+### 3.1 Evolution: From Q-Table to Neural Network
+The core shift in DQN is the **representation of knowledge**.
 
-### 3.1 Theoretical Framework
+* **Q-Learning (The Table):** Traditional RL uses a literal matrix (Q-Table). 
+* **DQN (The Approximator):** Uses a **Convolutional Neural Network (CNN)** as a function approximator. The network takes the pixel stack as input and predicts the Q-values for all available actions simultaneously. This allows the agent to **generalize**—it learns that a "red curb" means a turn, even if it has never seen that exact pixel arrangement before.
+
+![Figure 1: Comparison between traditional Tabular Q-Learning and Deep Q-Networks (DQN)](image-1.png)
+*Figure 1: Structural comparison between traditional Tabular Q-Learning and Deep Q-Networks (DQN). Traditional Q-Learning relies on an exhaustive lookup table, which becomes computationally infeasible for high-dimensional sensory inputs. In contrast, DQN utilizes a neural network (CNN) to approximate Q-values, enabling the agent to generalize patterns and features from raw pixel observations.*
+**Source:** [Marta Comes Hernandez (Medium)](https://medium.com/@mcomeshernandez/reinforcement-learning-diving-into-deep-q-networks-dqn-92f237f448ec)
+
+### 3.2 Theoretical Framework
 DQN is fundamentally a **Value-Based** method. It does not learn a policy directly; instead, it learns to estimate the "quality" of taking a specific action in a specific state.
 
 #### The Bellman Equation
@@ -113,25 +121,18 @@ $$Q(s, a) \leftarrow Q(s, a) + \alpha [r + \gamma \max_{a'} Q(s', a') - Q(s, a)]
 #### The Loss Function
 To train the neural network (CNN), we minimize the **Mean Squared Error (MSE)** between our current prediction and the stable target:
 
-$$L(\theta) = \mathbb{E} \left[ ( \underbrace{r + \gamma \max_{a'} Q(s', a'; \theta^{-})}_{\text{Stable Target}} - \underbrace{Q(s, a; \theta)}_{\text{Current Prediction}} )^2 \right]$$
+$$L(\theta) = \mathbb{E} \left[ ( {r + \gamma \max_{a'} Q(s', a'; \theta^{-})} - {Q(s, a; \theta)} )^2 \right]$$
+
 
 * **$\gamma$ (Gamma):** The discount factor (usually 0.99).
 * **$\theta$:** Weights of the Policy Network.
 * **$\theta^{-}$:** Weights of the Target Network.
 
----
 
-### 3.2 Evolution: From Q-Table to Neural Network
-The core shift in DQN is the **representation of knowledge**.
 
-* **Q-Learning (The Table):** Traditional RL uses a literal matrix (Q-Table). In a 96x96 pixel environment like `CarRacing-v2`, there are too many possible pixel combinations to store in a table.
-* **DQN (The Approximator):** Uses a **Convolutional Neural Network (CNN)** as a function approximator. The network takes the pixel stack as input and predicts the Q-values for all available actions simultaneously. This allows the agent to **generalize**—it learns that a "red curb" means a turn, even if it has never seen that exact pixel arrangement before.
 
-![Figure 1: Comparison between traditional Tabular Q-Learning and Deep Q-Networks (DQN)](image-1.png)
-*Figure 1: Structural comparison between traditional Tabular Q-Learning and Deep Q-Networks (DQN). Traditional Q-Learning relies on an exhaustive lookup table, which becomes computationally infeasible for high-dimensional sensory inputs. In contrast, DQN utilizes a neural network (CNN) to approximate Q-values, enabling the agent to generalize patterns and features from raw pixel observations.*
-**Source:** [Marta Comes Hernandez (Medium)](https://medium.com/@mcomeshernandez/reinforcement-learning-diving-into-deep-q-networks-dqn-92f237f448ec)
 
-### 3.3 The Three Pillars of Stability
+### 3.3 Stability
 Standard neural networks are notoriously unstable when used for RL because the data is non-stationary (the agent's behavior changes as it learns). DQN solves this with three key mechanisms:
 
 #### A. Epsilon-Greedy Strategy (Exploration vs. Exploitation)
@@ -153,57 +154,174 @@ If we use the same network to calculate the prediction and the target, the targe
     2.  **Target Network ($\theta^{-}$):** A frozen copy used to calculate the stable target. It is synchronized with the Policy Network only every $N$ steps.
 
 
+### 3.4 Step-by-Step Training Loop
 
 
+1. **Create Q-Network and Target-Network**
+2. **Fill the Experience Buffer with data using the Q-Network**
+3. **Repeat the following steps a sufficient number of times**
+4. **Get a random sample from the Experience Buffer**
+5. **Feed the sample as input to the Q-Network and Target Network**
+6. **Use the output of the Target Network to train the Q-Network** (i.e. the output of the Target Network will play the role of the labels for the Q-Network in a standard supervised learning scenario)
+7. **Apply Exploration / Exploitation strategy** (ex: Epsilon Greedy)
+8. **If Exploration is selected then generate a random action, else If Exploitation is selected then feed the current state to the Q-Network and deduce action from the output.**
+9. **Apply action to the environment, get the reward, and the new state**
+10. **Store the old state, action, reward, and new state in the Experience buffer** (also called Replay Memory)
+11. **Every few episodes, copy the weights from Q-Network to the Target-Network**
 
-### 3.4 Classification (Taxonomy)
-Following the **ABCD** pillars of RL, DQN is classified as:
-* **A. Action Space:** **Discrete**. DQN cannot naturally output a range of numbers. We must discretize the CarRacing controls (e.g., Action 0: Hard Left, Action 1: Straight, Action 2: Hard Right).
-* **B. Policy Type:** **Deterministic**. It seeks the single highest value for a given state.
-* **C. Paradigm:** **Off-Policy**. It reuses data from the Replay Buffer regardless of the current policy.
-* **D. Architecture:** **Value-Based**. It focuses on the $Q$ function rather than a separate Actor.
-
-
-
-### 3.5 Step-by-Step Training Loop
-
-
-
-### DQN Training Process Schematic
-
-1.  **Initialization:** Create the **Policy Network** with random weights.
-2.  **Initial Sync:** Copy weights from the Policy Network to the **Target Network** to start with identical states.
-3.  **Navigation:** The agent interacts with the **Environment** using an $\epsilon$-greedy strategy and stores experiences in the **Replay Memory**.
-4.  **Prediction (Policy):** The Policy Network predicts the current **Q-values** for the sampled state.
-5.  **Reference (Target):** The Target Network generates **stable reference values** for the next state.
-6.  **Bellman Equation:** Inputs from the previous steps are processed through the Bellman formula.
-7.  **Set Target:** Establish the **"Correct Answer"** (Target Vector) based on the Bellman calculation.
-8.  **Optimization (Update):** The **Loss** box calculates the discrepancy between the target and the current prediction, driving the **Policy Network update** via backpropagation.
-9.  **Repetition:** The loop (steps 3–8) repeats iteratively to refine the agent's strategy.
-10. **Synchronization:** Periodically sync weights from the Policy Network to the Target Network to maintain training stability.
-
-![Figure 2: Deep Q-Network (DQN) Training Loop and Information Flow](image-2.png)
+![Figure 2: Deep Q-Network (DQN) Training Loop and Information Flow](image-3.png)
 *Figure 1: Procedural architecture and data flow of a Deep Q-Network (DQN) training cycle.*
 
 ---
 
+## 4. DDPG & TD3
+### 4.1 DDPG:
+
+DDPG was developed as a solution to the limitations of Deep Q-Networks (DQN) in continuous action spaces. While DQN relies on a discrete set of actions to calculate a maximum $Q$-value, DDPG utilizes an **Actor-Critic** architecture to output exact, continuous values.
+
+#### Architecture and Components
+*   **The Critic ($Q_{\theta}(s, a)$):** Learns to approximate the state-action value function. It evaluates how "good" a specific action $a$ is in state $s$.
+*   **The Actor ($\mu_{\phi}(s)$):** Learns a deterministic policy that maps states directly to a specific action vector (Steering, Gas, Brake).
+
+#### The Learning Mechanism
+DDPG updates the Actor by moving it in the direction of the gradient provided by the Critic. This is known as the **Deterministic Policy Gradient**:
+
+$$\nabla_{\phi} J \approx \nabla_a Q_{\theta}(s, a) \nabla_{\phi} \mu_{\phi}(s)$$
+
+The Critic is updated by minimizing the Mean Squared Error (MSE) against a target $y$:
+
+$$L = \mathbb{E} [(y - Q_{\theta}(s, a))^2]$$
+
+where the target is computed using target networks ($\theta', \phi'$) to maintain stability:
+
+$$y = r + \gamma Q_{\theta'}(s', \mu_{\phi'}(s'))$$
+
+
+#### The Problem: Overestimation Bias
+
+A fundamental flaw in DDPG is **Overestimation Bias**. Because the algorithm consistently uses the maximum estimated value (or the action that the Actor believes yields the maximum value) to calculate targets, noise in the $Q$-function leads to a positive bias. 
+
+Over time, these errors accumulate, causing the agent to develop "delusions" about the value of certain states. In the context of car racing, this often manifests as the agent getting stuck in local optima or failing to recover from high-speed turns due to inaccurate value estimations.
+
+#### Training loop
+1. **Initialize Networks:** Create the **Current Actor Network**, **Target Actor Network**, **Current Critic Network**, and **Target Critic Network**.
+2. **Environment Interaction:** The **Environment** sends the current state $S_t$ to the **Current Actor Network**.
+3. **Action Selection:** The **Current Actor Network** determines the action $a_t = \mu(s_t)$ to be executed.
+4. **Execution and Feedback:** Apply the action $a_t$ to the **Environment** to receive the reward $r_t$ and the next state $s_{t+1}$.
+5. **Data Storage:** Store the transition tuple $(s_t, a_t, r_t, s_{t+1})$ in the **Experience Replay Buffer**.
+6. **Sampling:** Retrieve a random mini-batch of experiences $(s_t, a_t, r_t, s_{t+1})$ from the **Experience Replay Buffer**.
+7. **Critic Target Calculation:** The **Target Critic Network** computes the target value $y_i$ to be used as a label for training.
+8. **Critic Update:** The **Current Critic Network** is updated via the **Adam optimizer**, minimizing the error between its prediction and $y_i$.
+9. **Actor Evaluation:** The **Current Actor Network** provides an action $a = \mu(s)$ to the **Current Critic Network**.
+10. **Gradient Feedback:** The **Current Critic Network** calculates the **gradient a** (action gradient) and sends it back to the **Current Actor Network**.
+11. **Actor Update:** The **Current Actor Network** uses the **Adam optimizer** to update its weights based on the received gradient to improve action selection.
+12. **Target Network Sync:** Periodically update the **Target Actor Network** and **Target Critic Network** by copying the weights from the current networks.
+
+##### 1. Initialization
+1. **Current Networks**: Initialize the **Actor** $\mu(s|\theta^\mu)$ and the **Critic** $Q(s, a|\theta^Q)$ with random weights.
+2. **Target Networks**: Initialize target networks $\mu'$ and $Q'$ by copying the weights: $\theta^{\mu'} \leftarrow \theta^\mu$ and $\theta^{Q'} \leftarrow \theta^Q$.
+3. **Memory**: Initialize the **Replay Buffer** $R$ to store experience tuples.
+
+##### 2. Interaction Phase (Acting)
+For each time step in the environment:
+1. **Select Action**: Pass the current state $s$ through the **Current Actor**: $a = \mu(s|\theta^\mu)$.
+2. **Exploration**: Add noise $\mathcal{N}$ (e.g., Ornstein-Uhlenbeck or Gaussian) to the action: $a_t = a + \mathcal{N}$.
+3. **Execute**: Perform action $a_t$, observe reward $r$, and transition to the next state $s'$.
+4. **Store**: Save the transition $(s, a, r, s')$ into the **Replay Buffer** $R$.
+
+##### 3. Learning Phase (Training)
+Sample a random minibatch of $N$ transitions from $R$ and perform the following updates:
+
+###### A. Compute Target Value (The "Oracle")
+Use the **Target Networks** to estimate the future value without the instability of immediate weight changes:
+1. Get the next action: $a' = \mu'(s'|\theta^{\mu'})$.
+2. Calculate the target $Q$-value: 
+   $$y = r + \gamma Q'(s', a'|\theta^{Q'})$$
+
+###### B. Update Current Critic
+The Critic learns to minimize the Mean Squared Error (MSE) between its current prediction and the target value $y$:
+$$L = \frac{1}{N} \sum (y - Q(s, a|\theta^Q))^2$$
+*Update $\theta^Q$ via gradient descent.*
+
+###### C. Update Current Actor
+The Actor is updated using the **Deterministic Policy Gradient**. It adjusts its weights to maximize the $Q$-value provided by the (now updated) Current Critic:
+$$\nabla_{\theta^\mu} J \approx \frac{1}{N} \sum \nabla_a Q(s, a|\theta^Q) \big|_{a=\mu(s)} \nabla_{\theta^\mu} \mu(s|\theta^\mu)$$
+*Update $\theta^\mu$ via gradient ascent.*
+
+##### 4. Synchronization (Soft Update)
+Instead of a "hard" copy, the Target Networks are updated incrementally to track the Current Networks slowly:
+* **Target Critic**: 
+  $\theta^{Q'} \leftarrow \tau \theta^Q + (1 - \tau) \theta^{Q'}$
+* **Target Actor**: 
+  $\theta^{\mu'} \leftarrow \tau \theta^\mu + (1 - \tau) \theta^{\mu'}$
+
+
+![Actor-Critic Architecture Diagram](image-6.png)
+*Figure 3. Block diagram of an Actor-Critic Reinforcement Learning architecture featuring Experience Replay and Target Networks. The schema illustrates the interaction loop where the **Actor** selects actions, transitions are stored in memory, and the **Critic** provides action gradients to update the Actor based on sampled experience and target value calculations.*
+
+
+### 4.2 TD3: Improvements
+
+TD3 (Twin Delayed DDPG) introduces three specific mechanisms to address the instabilities of DDPG.
+
+####  1: Clipped Double Q-Learning
+To combat overestimation, TD3 employs **two independent Critic networks** ($Q_{\theta_1}, Q_{\theta_2}$). When calculating the target value, it takes the **minimum** of the two estimates. This conservative approach prevents the agent from over-exploiting noisy $Q$-value peaks.
+
+**TD3 Target Definition:**
+$$y = r + \gamma \min_{i=1,2} Q_{\theta'_i}(s', a')$$
+
+#### 2: Delayed Policy Updates
+DDPG updates the Actor and Critic simultaneously at every step. However, if the Critic is still inaccurate, the Actor's update will be based on "false" information. TD3 addresses this by:
+1. Updating the **Critics** at every step.
+2. Updating the **Actor** and all **Target Networks** only every $d$ steps (typically $d=2$).
+
+This allows the value function to stabilize before the policy is allowed to change.
+
+#### 3: Target Policy Smoothing
+Deterministic policies are prone to overfitting to narrow "spikes" in the $Q$-function. TD3 adds clipped random noise to the action used for the target calculation. This serves as a regularizer, forcing the Critic to learn that similar actions should yield similar rewards.
+
+**Smoothed Target Action:**
+$$a' = \text{clip}(\mu_{\phi'}(s') + \epsilon, a_{low}, a_{high})$$
+$$\epsilon \sim \text{clip}(\mathcal{N}(0, \sigma), -c, c)$$
+
+
+#### Training Loop
+
+1.  **Initialize Networks:** Create the six necessary networks: the **Current Actor Network** and its **Target Actor Network**; and the **Current Critic 1 Network**, **Target Critic 1 Network**, **Current Critic 2 Network**, and **Target Critic 2 Network**.
+2.  **Experience Buffer Setup:** Collect a few initial experience transitions $(s, a, r, s')$ and store them in the **Replay Memory** to begin training.
+3.  **Training Loop:** Repeat the following steps for a sufficient number of episodes/iterations.
+4.  **Sampling:** Retrieve a random mini-batch of experiences $(s, a, r, s')$ from the **Replay Memory**.
+5.  **Target Action Calculation:** For the next state $s'$, predict the target action $a_{target}$ using the **Target Actor Network**, and add small noise to it (this is the "Target Policy Smoothing" technique, depicted as $\tilde{a}$ in the diagram).
+6.  **Target Q-Value Calculation:** Feed $(s', a_{target})$ into **both** **Target Critic 1** and **Target Critic 2**. The target value $y_i$ is calculated as $r + \gamma \min(Q_{Target1}, Q_{Target2})$ (this is the "Twin Critics" comparison step, visualized in the "Compare target Q" box).
+7.  **Critic Update:** Update **both** **Current Critic Networks** (Critic1 and Critic2) using the **Adam optimizer** by minimizing the error between their predictions for $(s, a)$ and the target value $y_i$. Point arrows up indicate this gradient descent step.
+8.  **Action Selection for Environment Interaction:** For the current state $s$, the **Current Actor Network** determines the action $a = \mu(s)$. For exploration, small noise is added.
+9.  **Environment Interaction:** Apply the chosen action $a$ to the **Environment** (visualized in the Reward/States block) to receive the reward $r$ and observe the next state $s'$ (labeled as S on the feedback loop from the Delay block to Replay memory).
+10. **Data Storage:** Store the new transition tuple $(s, a, r, s')$ in the **Replay Memory**.
+11. **Delayed Update:** *Every $d$ (often 2) training steps*, perform the following two sub-steps:
+    * **11a. Actor Update:** Update the **Current Actor Network** using the **Adam optimizer** based on the action gradient from the **Current Critic** (e.g., Critic 1), to maximize its output (policy gradient).
+    * **11b. Target Network Sync:** Softly update the weights of **all three** target networks (**Target Actor**, **Target Critic 1**, **Target Critic 2**) from their corresponding current networks.
+
+
+
+![Actor-Critic Architecture Diagram](image-5.png)
+*Figure 4. Block diagram of the specialized Twin Delayed DDPG (TD3) control agent architecture. The schematic prominently features the dual-critic structure (Twin Critics, labeled Critic1 and Critic2) designed to address value overestimation. It shows separate Target Critic networks and a Target Actor network. Key elements include the target value comparison ("Compare target Q"), policy gradient update pathways, an experience replay memory, and a delayed state feedback loop from the environment, all contributing to more stable and efficient reinforcement learning.*
+
 ---
 
-## 3. Twin Delayed DDPG (TD3): Mastering Continuity
-While DQN excels in discrete spaces, it fails in continuous domains. TD3 was developed to address the **Overestimation Bias** inherent in the Deep Deterministic Policy Gradient (DDPG) algorithm.
+### 4.3 Summary Comparison
 
-### 3.1 The Overestimation Problem
-Value-based methods often overestimate Q-values because they use the maximum of noisy estimates. In continuous control, this leads to the accumulation of errors and suboptimal policies.
-
-### 3.2 The TD3 "Tricks" for Stability
-1.  **Clipped Double-Q Learning:** TD3 maintains two independent critics ($Q_1, Q_2$) and uses the minimum of their estimates to calculate the target:
-    $$y = r + \gamma \min_{i=1,2} Q_{\theta_{target, i}}(s', \mu_{\phi_{target}}(s') + \epsilon)$$
-2.  **Target Policy Smoothing:** Small random noise is added to the target actions to smooth out the value function surface, making it less susceptible to exploitation by policy errors.
-3.  **Delayed Policy Updates:** The Actor network is updated at a lower frequency than the Critic, ensuring that the value function is sufficiently accurate before adjusting the policy.
-
-
+| Feature | DDPG | TD3 |
+| :--- | :--- | :--- |
+| **Critics** | One Network | Two (Twin) Networks |
+| **Target Logic** | $Q(s', \mu(s'))$ | $\min(Q_1, Q_2)(s', a')$ |
+| **Update Cadence** | Simultaneous | Delayed Policy Updates |
+| **Policy Robustness** | Susceptible to $Q$-spikes | Target Policy Smoothing |
+| **Performance** | High variance | Stable & Robust |
 
 ---
+
+
+
 
 ## 4. Soft Actor-Critic (SAC): Maximum Entropy Framework
 SAC is an off-policy actor-critic algorithm that utilizes a stochastic policy. It is distinguished by its focus on **Maximum Entropy Reinforcement Learning**.
