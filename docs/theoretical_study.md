@@ -204,18 +204,6 @@ A fundamental flaw in DDPG is **Overestimation Bias**. Because the algorithm con
 Over time, these errors accumulate, causing the agent to develop "delusions" about the value of certain states. In the context of car racing, this often manifests as the agent getting stuck in local optima or failing to recover from high-speed turns due to inaccurate value estimations.
 
 #### Training loop
-1. **Initialize Networks:** Create the **Current Actor Network**, **Target Actor Network**, **Current Critic Network**, and **Target Critic Network**.
-2. **Environment Interaction:** The **Environment** sends the current state $S_t$ to the **Current Actor Network**.
-3. **Action Selection:** The **Current Actor Network** determines the action $a_t = \mu(s_t)$ to be executed.
-4. **Execution and Feedback:** Apply the action $a_t$ to the **Environment** to receive the reward $r_t$ and the next state $s_{t+1}$.
-5. **Data Storage:** Store the transition tuple $(s_t, a_t, r_t, s_{t+1})$ in the **Experience Replay Buffer**.
-6. **Sampling:** Retrieve a random mini-batch of experiences $(s_t, a_t, r_t, s_{t+1})$ from the **Experience Replay Buffer**.
-7. **Critic Target Calculation:** The **Target Critic Network** computes the target value $y_i$ to be used as a label for training.
-8. **Critic Update:** The **Current Critic Network** is updated via the **Adam optimizer**, minimizing the error between its prediction and $y_i$.
-9. **Actor Evaluation:** The **Current Actor Network** provides an action $a = \mu(s)$ to the **Current Critic Network**.
-10. **Gradient Feedback:** The **Current Critic Network** calculates the **gradient a** (action gradient) and sends it back to the **Current Actor Network**.
-11. **Actor Update:** The **Current Actor Network** uses the **Adam optimizer** to update its weights based on the received gradient to improve action selection.
-12. **Target Network Sync:** Periodically update the **Target Actor Network** and **Target Critic Network** by copying the weights from the current networks.
 
 ##### 1. Initialization
 1. **Current Networks**: Initialize the **Actor** $\mu(s|\theta^\mu)$ and the **Critic** $Q(s, a|\theta^Q)$ with random weights.
@@ -232,18 +220,18 @@ For each time step in the environment:
 ##### 3. Learning Phase (Training)
 Sample a random minibatch of $N$ transitions from $R$ and perform the following updates:
 
-###### A. Compute Target Value (The "Oracle")
++ A. Compute Target Value (The "Oracle")
 Use the **Target Networks** to estimate the future value without the instability of immediate weight changes:
 1. Get the next action: $a' = \mu'(s'|\theta^{\mu'})$.
 2. Calculate the target $Q$-value: 
    $$y = r + \gamma Q'(s', a'|\theta^{Q'})$$
 
-###### B. Update Current Critic
+ + B. Update Current Critic
 The Critic learns to minimize the Mean Squared Error (MSE) between its current prediction and the target value $y$:
 $$L = \frac{1}{N} \sum (y - Q(s, a|\theta^Q))^2$$
 *Update $\theta^Q$ via gradient descent.*
 
-###### C. Update Current Actor
+ + C. Update Current Actor
 The Actor is updated using the **Deterministic Policy Gradient**. It adjusts its weights to maximize the $Q$-value provided by the (now updated) Current Critic:
 $$\nabla_{\theta^\mu} J \approx \frac{1}{N} \sum \nabla_a Q(s, a|\theta^Q) \big|_{a=\mu(s)} \nabla_{\theta^\mu} \mu(s|\theta^\mu)$$
 *Update $\theta^\mu$ via gradient ascent.*
@@ -287,24 +275,43 @@ $$\epsilon \sim \text{clip}(\mathcal{N}(0, \sigma), -c, c)$$
 
 #### Training Loop
 
-1.  **Initialize Networks:** Create the six necessary networks: the **Current Actor Network** and its **Target Actor Network**; and the **Current Critic 1 Network**, **Target Critic 1 Network**, **Current Critic 2 Network**, and **Target Critic 2 Network**.
-2.  **Experience Buffer Setup:** Collect a few initial experience transitions $(s, a, r, s')$ and store them in the **Replay Memory** to begin training.
-3.  **Training Loop:** Repeat the following steps for a sufficient number of episodes/iterations.
-4.  **Sampling:** Retrieve a random mini-batch of experiences $(s, a, r, s')$ from the **Replay Memory**.
-5.  **Target Action Calculation:** For the next state $s'$, predict the target action $a_{target}$ using the **Target Actor Network**, and add small noise to it (this is the "Target Policy Smoothing" technique, depicted as $\tilde{a}$ in the diagram).
-6.  **Target Q-Value Calculation:** Feed $(s', a_{target})$ into **both** **Target Critic 1** and **Target Critic 2**. The target value $y_i$ is calculated as $r + \gamma \min(Q_{Target1}, Q_{Target2})$ (this is the "Twin Critics" comparison step, visualized in the "Compare target Q" box).
-7.  **Critic Update:** Update **both** **Current Critic Networks** (Critic1 and Critic2) using the **Adam optimizer** by minimizing the error between their predictions for $(s, a)$ and the target value $y_i$. Point arrows up indicate this gradient descent step.
-8.  **Action Selection for Environment Interaction:** For the current state $s$, the **Current Actor Network** determines the action $a = \mu(s)$. For exploration, small noise is added.
-9.  **Environment Interaction:** Apply the chosen action $a$ to the **Environment** (visualized in the Reward/States block) to receive the reward $r$ and observe the next state $s'$ (labeled as S on the feedback loop from the Delay block to Replay memory).
-10. **Data Storage:** Store the new transition tuple $(s, a, r, s')$ in the **Replay Memory**.
-11. **Delayed Update:** *Every $d$ (often 2) training steps*, perform the following two sub-steps:
-    * **11a. Actor Update:** Update the **Current Actor Network** using the **Adam optimizer** based on the action gradient from the **Current Critic** (e.g., Critic 1), to maximize its output (policy gradient).
-    * **11b. Target Network Sync:** Softly update the weights of **all three** target networks (**Target Actor**, **Target Critic 1**, **Target Critic 2**) from their corresponding current networks.
+##### 1. Initialization
+1. **Current Networks**: Initialize one **Actor** $\mu(s|\theta^\mu)$ and **two Critics** $Q_1(s, a|\theta^{Q_1})$, $Q_2(s, a|\theta^{Q_2})$ with random weights.
+2. **Target Networks**: Initialize target networks for all three: $\theta^{\mu'} \leftarrow \theta^\mu$, $\theta^{Q_1'} \leftarrow \theta^{Q_1}$, and $\theta^{Q_2'} \leftarrow \theta^{Q_2}$.
+3. **Memory**: Initialize the **Replay Buffer** $R$.
 
+##### 2. Interaction Phase (Acting)
+Identical to DDPG:
+1. Select action $a = \mu(s|\theta^\mu) + \epsilon$, where $\epsilon$ is exploration noise.
+2. Execute action, observe reward $r$ and next state $s'$.
+3. Store transition $(s, a, r, s')$ in $R$.
 
+##### 3. Learning Phase (The "Twin" and "Delayed" Logic)
+Sample a minibatch of $N$ transitions. TD3 performs a specific sequence:
+
++ A. Target Policy Smoothing
+When calculating the target value, TD3 adds a small amount of clipped noise to the target action to prevent the policy from exploiting inaccuracies in the Q-function:
+$$\tilde{a} = \mu'(s'|\theta^{\mu'}) + \text{clip}(\epsilon, -c, c)$$
+
++ B. Clipped Double Q-Learning (The "Twin" Critics)
+To combat overestimation, TD3 uses the **minimum** value between the two target critics:
+$$y = r + \gamma \min_{i=1,2} Q_i'(s', \tilde{a}|\theta^{Q_i'})$$
+
++ C. Update Current Critics
+Both current critics are updated by minimizing the MSE loss against the same target $y$:
+$$L_i = \frac{1}{N} \sum (y - Q_i(s, a|\theta^{Q_i}))^2 \quad \text{for } i \in \{1, 2\}$$
+
++  D. Delayed Policy & Target Updates
+This is the "Delayed" part. The Actor and all Target networks are updated **less frequently** (every $d$ steps, usually $d=2$) than the Critics:
+1. **Update Current Actor**: Using the gradient from $Q_1$ (only one critic is used for the actor gradient).
+2. **Soft Update Targets**: Slowly update all three target networks: 
+    * **Target Critic**: 
+  $\theta^{Q'} \leftarrow \tau \theta^Q + (1 - \tau) \theta^{Q'}$
+   * **Target Actor**: 
+  $\theta^{\mu'} \leftarrow \tau \theta^\mu + (1 - \tau) \theta^{\mu'}$
 
 ![Actor-Critic Architecture Diagram](image-5.png)
-*Figure 4. Block diagram of the specialized Twin Delayed DDPG (TD3) control agent architecture. The schematic prominently features the dual-critic structure (Twin Critics, labeled Critic1 and Critic2) designed to address value overestimation. It shows separate Target Critic networks and a Target Actor network. Key elements include the target value comparison ("Compare target Q"), policy gradient update pathways, an experience replay memory, and a delayed state feedback loop from the environment, all contributing to more stable and efficient reinforcement learning.*
+<br>*Figure 4. Block diagram of the specialized Twin Delayed DDPG (TD3) control agent architecture. The schematic prominently features the dual-critic structure (Twin Critics, labeled Critic1 and Critic2) designed to address value overestimation. It shows separate Target Critic networks and a Target Actor network. Key elements include the target value comparison ("Compare target Q"), policy gradient update pathways, an experience replay memory, and a delayed state feedback loop from the environment, all contributing to more stable and efficient reinforcement learning.*
 
 ---
 
@@ -319,8 +326,6 @@ $$\epsilon \sim \text{clip}(\mathcal{N}(0, \sigma), -c, c)$$
 | **Performance** | High variance | Stable & Robust |
 
 ---
-
-
 
 
 ## 4. Soft Actor-Critic (SAC): Maximum Entropy Framework
