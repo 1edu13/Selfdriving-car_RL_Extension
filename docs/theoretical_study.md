@@ -156,34 +156,54 @@ If we use the same network to calculate the prediction and the target, the targe
 
 ### 3.4 Step-by-Step Training Loop
 
+#### 1. Initialization
+1. **Current Q-Network**: Initialize a network $Q(s, a|\theta)$ with random weights to estimate the action-value function.
+2. **Target Q-Network**: Initialize a twin network $Q'$ with the same weights: $\theta' \leftarrow \theta$.
+3. **Memory**: Initialize a **Replay Buffer** $D$ with a fixed capacity.
+4. **Parameters**: Set the exploration rate $\epsilon$ (epsilon), discount factor $\gamma$, and the target update frequency $C$.
 
-1. **Create Q-Network and Target-Network**
-2. **Fill the Experience Buffer with data using the Q-Network**
-3. **Repeat the following steps a sufficient number of times**
-4. **Get a random sample from the Experience Buffer**
-5. **Feed the sample as input to the Q-Network and Target Network**
-6. **Use the output of the Target Network to train the Q-Network** (i.e. the output of the Target Network will play the role of the labels for the Q-Network in a standard supervised learning scenario)
-7. **Apply Exploration / Exploitation strategy** (ex: Epsilon Greedy)
-8. **If Exploration is selected then generate a random action, else If Exploitation is selected then feed the current state to the Q-Network and deduce action from the output.**
-9. **Apply action to the environment, get the reward, and the new state**
-10. **Store the old state, action, reward, and new state in the Experience buffer** (also called Replay Memory)
-11. **Every few episodes, copy the weights from Q-Network to the Target-Network**
+#### 2. Interaction Phase (Acting)
+For each time step:
+1. **Epsilon-Greedy Selection**: 
+   - With probability $\epsilon$, select a **random action** $a$ (exploration).
+   - Otherwise, select $a = \arg\max_a Q(s, a|\theta)$ (exploitation).
+2. **Execute**: Perform action $a$, observe reward $r$ and next state $s'$.
+3. **Store**: Save the transition $(s, a, r, s', \text{done})$ in the **Replay Buffer** $D$.
+4. **Decay**: Gradually reduce $\epsilon$ over time to shift from exploration to exploitation.
+
+#### 3. Learning Phase (Training)
+Sample a random minibatch of $N$ transitions from $D$:
+
++ A. Compute Target Q-Value
+Unlike DDPG, DQN uses the **maximum** predicted Q-value of the next state to calculate the target:
+$$y = \begin{cases} r & \text{if episode ends at } s' \\ r + \gamma \max_{a'} Q'(s', a'|\theta') & \text{otherwise} \end{cases}$$
+*Note: We use the **Target Network** ($Q'$) here to provide a stable ground truth.*
+
++ B. Update Current Q-Network
+The network is trained to minimize the Mean Squared Error (MSE) between its current estimate and the calculated target $y$:
+$$L = \frac{1}{N} \sum (y - Q(s, a|\theta))^2$$
+*Update $\theta$ using an optimizer (like Adam).*
+
+#### 4. Target Network Synchronization
+DQN typically uses a **Hard Update** strategy, though soft updates are also possible:
+- **Hard Update**: Every $C$ steps, copy the weights from the Current Network to the Target Network: $\theta' \leftarrow \theta$.
+- **Soft Update (Alternative)**: $\theta' \leftarrow \tau \theta + (1 - \tau) \theta'$.
+
 
 ![Figure 2: Deep Q-Network (DQN) Training Loop and Information Flow](image-3.png)
 *Figure 1: Procedural architecture and data flow of a Deep Q-Network (DQN) training cycle.*
 
 ---
 
-## 4. DDPG & TD3
-### 4.1 DDPG:
+## 4. DDPG:
 
 DDPG was developed as a solution to the limitations of Deep Q-Networks (DQN) in continuous action spaces. While DQN relies on a discrete set of actions to calculate a maximum $Q$-value, DDPG utilizes an **Actor-Critic** architecture to output exact, continuous values.
 
-#### Architecture and Components
+### 4.1 Architecture and Components
 *   **The Critic ($Q_{\theta}(s, a)$):** Learns to approximate the state-action value function. It evaluates how "good" a specific action $a$ is in state $s$.
 *   **The Actor ($\mu_{\phi}(s)$):** Learns a deterministic policy that maps states directly to a specific action vector (Steering, Gas, Brake).
 
-#### The Learning Mechanism
+### 4.2 The Learning Mechanism
 DDPG updates the Actor by moving it in the direction of the gradient provided by the Critic. This is known as the **Deterministic Policy Gradient**:
 
 $$\nabla_{\phi} J \approx \nabla_a Q_{\theta}(s, a) \nabla_{\phi} \mu_{\phi}(s)$$
@@ -197,27 +217,27 @@ where the target is computed using target networks ($\theta', \phi'$) to maintai
 $$y = r + \gamma Q_{\theta'}(s', \mu_{\phi'}(s'))$$
 
 
-#### The Problem: Overestimation Bias
+### 4.3 The Problem: Overestimation Bias
 
 A fundamental flaw in DDPG is **Overestimation Bias**. Because the algorithm consistently uses the maximum estimated value (or the action that the Actor believes yields the maximum value) to calculate targets, noise in the $Q$-function leads to a positive bias. 
 
 Over time, these errors accumulate, causing the agent to develop "delusions" about the value of certain states. In the context of car racing, this often manifests as the agent getting stuck in local optima or failing to recover from high-speed turns due to inaccurate value estimations.
 
-#### Training loop
+### 4.4 Training loop
 
 ##### 1. Initialization
 1. **Current Networks**: Initialize the **Actor** $\mu(s|\theta^\mu)$ and the **Critic** $Q(s, a|\theta^Q)$ with random weights.
 2. **Target Networks**: Initialize target networks $\mu'$ and $Q'$ by copying the weights: $\theta^{\mu'} \leftarrow \theta^\mu$ and $\theta^{Q'} \leftarrow \theta^Q$.
 3. **Memory**: Initialize the **Replay Buffer** $R$ to store experience tuples.
 
-##### 2. Interaction Phase (Acting)
+#### 2. Interaction Phase (Acting)
 For each time step in the environment:
 1. **Select Action**: Pass the current state $s$ through the **Current Actor**: $a = \mu(s|\theta^\mu)$.
 2. **Exploration**: Add noise $\mathcal{N}$ (e.g., Ornstein-Uhlenbeck or Gaussian) to the action: $a_t = a + \mathcal{N}$.
 3. **Execute**: Perform action $a_t$, observe reward $r$, and transition to the next state $s'$.
 4. **Store**: Save the transition $(s, a, r, s')$ into the **Replay Buffer** $R$.
 
-##### 3. Learning Phase (Training)
+#### 3. Learning Phase (Training)
 Sample a random minibatch of $N$ transitions from $R$ and perform the following updates:
 
 + A. Compute Target Value (The "Oracle")
@@ -236,7 +256,7 @@ The Actor is updated using the **Deterministic Policy Gradient**. It adjusts its
 $$\nabla_{\theta^\mu} J \approx \frac{1}{N} \sum \nabla_a Q(s, a|\theta^Q) \big|_{a=\mu(s)} \nabla_{\theta^\mu} \mu(s|\theta^\mu)$$
 *Update $\theta^\mu$ via gradient ascent.*
 
-##### 4. Synchronization (Soft Update)
+#### 4. Synchronization (Soft Update)
 Instead of a "hard" copy, the Target Networks are updated incrementally to track the Current Networks slowly:
 * **Target Critic**: 
   $\theta^{Q'} \leftarrow \tau \theta^Q + (1 - \tau) \theta^{Q'}$
@@ -247,25 +267,25 @@ Instead of a "hard" copy, the Target Networks are updated incrementally to track
 ![Actor-Critic Architecture Diagram](image-6.png)
 *Figure 3. Block diagram of an Actor-Critic Reinforcement Learning architecture featuring Experience Replay and Target Networks. The schema illustrates the interaction loop where the **Actor** selects actions, transitions are stored in memory, and the **Critic** provides action gradients to update the Actor based on sampled experience and target value calculations.*
 
-
-### 4.2 TD3: Improvements
+## 5. TD3
+### 5.1 TD3: Improvements
 
 TD3 (Twin Delayed DDPG) introduces three specific mechanisms to address the instabilities of DDPG.
 
-####  1: Clipped Double Q-Learning
++ 1: Clipped Double Q-Learning
 To combat overestimation, TD3 employs **two independent Critic networks** ($Q_{\theta_1}, Q_{\theta_2}$). When calculating the target value, it takes the **minimum** of the two estimates. This conservative approach prevents the agent from over-exploiting noisy $Q$-value peaks.
 
 **TD3 Target Definition:**
 $$y = r + \gamma \min_{i=1,2} Q_{\theta'_i}(s', a')$$
 
-#### 2: Delayed Policy Updates
++ 2: Delayed Policy Updates
 DDPG updates the Actor and Critic simultaneously at every step. However, if the Critic is still inaccurate, the Actor's update will be based on "false" information. TD3 addresses this by:
 1. Updating the **Critics** at every step.
 2. Updating the **Actor** and all **Target Networks** only every $d$ steps (typically $d=2$).
 
 This allows the value function to stabilize before the policy is allowed to change.
 
-#### 3: Target Policy Smoothing
++ 3: Target Policy Smoothing
 Deterministic policies are prone to overfitting to narrow "spikes" in the $Q$-function. TD3 adds clipped random noise to the action used for the target calculation. This serves as a regularizer, forcing the Critic to learn that similar actions should yield similar rewards.
 
 **Smoothed Target Action:**
@@ -273,20 +293,19 @@ $$a' = \text{clip}(\mu_{\phi'}(s') + \epsilon, a_{low}, a_{high})$$
 $$\epsilon \sim \text{clip}(\mathcal{N}(0, \sigma), -c, c)$$
 
 
-#### Training Loop
+### 5.2 Training Loop
 
-##### 1. Initialization
+#### 1. Initialization
 1. **Current Networks**: Initialize one **Actor** $\mu(s|\theta^\mu)$ and **two Critics** $Q_1(s, a|\theta^{Q_1})$, $Q_2(s, a|\theta^{Q_2})$ with random weights.
 2. **Target Networks**: Initialize target networks for all three: $\theta^{\mu'} \leftarrow \theta^\mu$, $\theta^{Q_1'} \leftarrow \theta^{Q_1}$, and $\theta^{Q_2'} \leftarrow \theta^{Q_2}$.
 3. **Memory**: Initialize the **Replay Buffer** $R$.
 
-##### 2. Interaction Phase (Acting)
+#### 2. Interaction Phase (Acting)
 Identical to DDPG:
 1. Select action $a = \mu(s|\theta^\mu) + \epsilon$, where $\epsilon$ is exploration noise.
 2. Execute action, observe reward $r$ and next state $s'$.
 3. Store transition $(s, a, r, s')$ in $R$.
-
-##### 3. Learning Phase (The "Twin" and "Delayed" Logic)
+#### 3. Learning Phase (The "Twin" and "Delayed" Logic)
 Sample a minibatch of $N$ transitions. TD3 performs a specific sequence:
 
 + A. Target Policy Smoothing
@@ -315,7 +334,7 @@ This is the "Delayed" part. The Actor and all Target networks are updated **less
 
 ---
 
-### 4.3 Summary Comparison
+## 6 Summary Comparison DDPG vs TD3
 
 | Feature | DDPG | TD3 |
 | :--- | :--- | :--- |
