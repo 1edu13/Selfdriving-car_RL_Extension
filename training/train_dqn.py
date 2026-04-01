@@ -27,7 +27,7 @@ class ReplayBuffer:
 
 def train_dqn():
     # --- Hyperparameters ---
-    run_name = "dqn_carracing_baseline"
+    run_name = "dqn_baseline"
     env_id = "CarRacing-v2"
     seed = 42
     total_timesteps = 15000
@@ -132,8 +132,8 @@ def train_dqn():
 
         # 7. Save Model
         if global_step > 0 and global_step % 10000 == 0:
-            os.makedirs("models_dqn", exist_ok=True)
-            torch.save(policy_net.state_dict(), f"models_dqn/dqn_step_{global_step}.pth")
+            os.makedirs("models/dqn_baseline", exist_ok=True)
+            torch.save(policy_net.state_dict(), f"models/dqn_baseline/dqn_step_{global_step}.pth")
             print(f"Model saved at step {global_step}")
 
 if __name__ == "__main__":

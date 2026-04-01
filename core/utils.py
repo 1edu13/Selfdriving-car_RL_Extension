@@ -49,7 +49,7 @@ def make_env(env_id, seed, idx, capture_video, run_name, is_discrete=False):
 
         # Wrapper to record videos (optional, usually for evaluation or the first env)
         if capture_video and idx == 0:
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+            env = gym.wrappers.RecordVideo(env, f"results/videos/{run_name}")
 
         # Apply discretization if using DQN
         if is_discrete:

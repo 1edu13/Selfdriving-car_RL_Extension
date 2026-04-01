@@ -24,10 +24,8 @@ class DQNEvaluator:
         self.model_name = os.path.basename(model_path).replace(".pth", "")
 
         # Output directories setup
-        self.output_dir = Path("evaluation_results") / self.model_name
+        self.output_dir = Path("results/metrics") / self.model_name
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.videos_dir = self.output_dir / "videos"
-        self.videos_dir.mkdir(exist_ok=True)
 
     def run_evaluation(self):
         print(f"Loading DQN Model from: {self.model_path}")
@@ -109,7 +107,7 @@ class DQNEvaluator:
 if __name__ == "__main__":
     # ========== CONFIGURATION ==========
     # Update this path once your train_dqn.py script saves a model checkpoint
-    MODEL_PATH = r"C:\Users\emped\OneDrive\Documentos\MIS COSAS\Yo\3 CURSO\Selfdriving-car_RL_Extension\training\models_dqn\dqn_step_10000.pth"
+    MODEL_PATH = "models/dqn_baseline/dqn_step_10000.pth"
     if os.path.exists(MODEL_PATH):
         evaluator = DQNEvaluator(model_path=MODEL_PATH, num_episodes=10)
         evaluator.run_evaluation()
