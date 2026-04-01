@@ -131,7 +131,7 @@ def train_dqn():
             target_net.load_state_dict(policy_net.state_dict())
 
         # 7. Save Model
-        if global_step > 0 and global_step % 50000 == 0:
+        if global_step > 0 and global_step % 10000 == 0:
             os.makedirs("models_dqn", exist_ok=True)
             torch.save(policy_net.state_dict(), f"models_dqn/dqn_step_{global_step}.pth")
             print(f"Model saved at step {global_step}")
