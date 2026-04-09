@@ -30,18 +30,18 @@ def train_dqn():
     run_name = "dqn_baseline"
     env_id = "CarRacing-v2"
     seed = 42
-    total_timesteps = 15000
-    learning_rate = 1e-4
-    buffer_capacity = 50000
-    batch_size = 128
+    total_timesteps = 3000000       # Increased to 3 million steps
+    learning_rate = 1e-4            # Lower learning rate for better stability
+    buffer_capacity = 100000        # Increased buffer size
+    batch_size = 256                # Increased batch size for getting better gradients
     gamma = 0.99
-    target_update_freq = 1000  # Steps before updating target network
-    start_training_step = 10000 # Wait before training to fill buffer
+    target_update_freq = 5000       # Increased target update frequency for stability to Q target
+    start_training_step = 50000     # Start training after 50,000 steps
 
     # Epsilon-Greedy parameters
     epsilon_start = 1.0
     epsilon_end = 0.05
-    epsilon_decay = 100000 # Decay epsilon over this many steps
+    epsilon_decay = 500000          # Lower decay in order to force exploration
 
     # --- Setup ---
     device = get_device()
@@ -131,7 +131,7 @@ def train_dqn():
             target_net.load_state_dict(policy_net.state_dict())
 
         # 7. Save Model
-        if global_step > 0 and global_step % 10000 == 0:
+        if global_step > 0 and global_step % 500000 == 0:
             os.makedirs("models/dqn_baseline", exist_ok=True)
             torch.save(policy_net.state_dict(), f"models/dqn_baseline/dqn_step_{global_step}.pth")
             print(f"Model saved at step {global_step}")
