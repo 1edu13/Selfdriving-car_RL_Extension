@@ -1,5 +1,8 @@
 import torch
 import torch.nn as nn
+
+# --- CPU Hardware Optimization for Intel ---
+torch.set_num_threads(4) # Limit PyTorch threads to avoid gym environment bottleneck
 import torch.optim as optim
 import numpy as np
 import gymnasium as gym
@@ -89,7 +92,8 @@ def train_dqn():
 
         # 2. Select Action
         obs_tensor = torch.tensor(obs, dtype=torch.float32).to(device)
-        action = policy_net.get_action(obs_tensor, epsilon, device)
+        with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+            action = policy_net.get_action(obs_tensor, epsilon, device)
         action_np = action.cpu().numpy()
 
         # 3. Environment Step
@@ -119,20 +123,21 @@ def train_dqn():
             b_dones = torch.tensor(b_dones).to(device)
 
             # Compute Q(s_t, a)
-            q_values = policy_net(b_obs)
-            state_action_values = q_values.gather(1, b_actions).squeeze(1)
+            with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+                q_values = policy_net(b_obs)
+                state_action_values = q_values.gather(1, b_actions).squeeze(1)
 
-            # Compute V(s_{t+1}) for all next states using Target Network
-            with torch.no_grad():
-                next_q_values = target_net(b_next_obs)
-                max_next_q_values = next_q_values.max(1)[0]
+                # Compute V(s_{t+1}) for all next states using Target Network
+                with torch.no_grad():
+                    next_q_values = target_net(b_next_obs)
+                    max_next_q_values = next_q_values.max(1)[0]
 
-            # Compute expected Q values (Bellman Equation)
-            # If state is terminal (done), the expected future reward is 0
-            expected_state_action_values = b_rewards + (gamma * max_next_q_values * (1 - b_dones))
+                # Compute expected Q values (Bellman Equation)
+                # If state is terminal (done), the expected future reward is 0
+                expected_state_action_values = b_rewards + (gamma * max_next_q_values * (1 - b_dones))
 
-            # Compute Huber loss or MSE loss
-            loss = loss_fn(state_action_values, expected_state_action_values)
+                # Compute Huber loss or MSE loss
+                loss = loss_fn(state_action_values, expected_state_action_values)
 
             # Optimize the model
             optimizer.zero_grad()

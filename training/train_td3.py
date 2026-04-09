@@ -8,6 +8,9 @@ updates that characterize TD3.
 
 import torch
 import torch.nn as nn
+
+# --- CPU Hardware Optimization for Intel ---
+torch.set_num_threads(4) # Limit PyTorch threads to avoid gym environment bottleneck
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
@@ -121,7 +124,7 @@ def train_td3():
         if global_step < start_training_step:
             action_np = envs.action_space.sample() # Random continuous action
         else:
-            with torch.no_grad():
+            with torch.no_grad(), torch.autocast(device_type="cpu", dtype=torch.bfloat16):
                 obs_tensor = torch.tensor(obs, dtype=torch.float32).to(device)
                 
                 # Get the deterministic action from the actor network
@@ -164,7 +167,7 @@ def train_td3():
             b_dones = torch.tensor(b_dones).unsqueeze(1).to(device)
 
             # --- Update Critic (Every Step) ---
-            with torch.no_grad():
+            with torch.no_grad(), torch.autocast(device_type="cpu", dtype=torch.bfloat16):
                 # Target Policy Smoothing: Add clipped noise to the target actor's next action.
                 # This makes the value estimation more robust and prevents exploitation of peaks in the Q-function.
                 next_action = actor_target(b_next_obs)
@@ -187,10 +190,11 @@ def train_td3():
                 target_q = b_rewards + gamma * target_q * (1 - b_dones)
 
             # Get current Q-value estimates from both critics
-            current_q1, current_q2 = critic(b_obs, b_actions)
-
-            # Calculate MSE loss for both critics comparing to the Bellman target
-            critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
+            with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+                current_q1, current_q2 = critic(b_obs, b_actions)
+    
+                # Calculate MSE loss for both critics comparing to the Bellman target
+                critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
 
             # Optimize Critic networks
             critic_optimizer.zero_grad()
@@ -205,7 +209,8 @@ def train_td3():
                 # We calculate the action proposed by our current actor, then evaluate it using Critic 1.
                 # We use only Critic 1 (q1) for the actor update gradient (it's sufficient).
                 # We use negative Q-value because Optimizers minimize loss
-                actor_loss = -critic.q1(b_obs, actor(b_obs)).mean()
+                with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+                    actor_loss = -critic.q1(b_obs, actor(b_obs)).mean()
 
                 actor_optimizer.zero_grad()
                 actor_loss.backward()

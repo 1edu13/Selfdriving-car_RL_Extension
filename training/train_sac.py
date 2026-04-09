@@ -8,6 +8,9 @@ which leads to exceptional exploration and robust policies.
 
 import torch
 import torch.nn as nn
+
+# --- CPU Hardware Optimization for Intel ---
+torch.set_num_threads(4) # Limit PyTorch threads to avoid gym environment bottleneck
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
@@ -133,7 +136,7 @@ def train_sac():
             # Completely random initial exploration
             action_np_normalized = envs.action_space.sample() 
         else:
-            with torch.no_grad():
+            with torch.no_grad(), torch.autocast(device_type="cpu", dtype=torch.bfloat16):
                 obs_tensor = torch.tensor(obs, dtype=torch.float32).to(device)
                 
                 # Sample the stochastic policy
@@ -176,7 +179,7 @@ def train_sac():
             alpha = log_alpha.exp().detach()
 
             # --- Update Critic (Q-Networks) ---
-            with torch.no_grad():
+            with torch.no_grad(), torch.autocast(device_type="cpu", dtype=torch.bfloat16):
                 # Sample NEXT actions and their log-probabilities from current policy
                 next_action, next_log_prob = actor.get_action(b_next_obs)
                 
@@ -188,8 +191,9 @@ def train_sac():
                 target_q = b_rewards + gamma * target_q * (1 - b_dones)
 
             # Get current Q-values given our observed Replay actions
-            current_q1, current_q2 = critic(b_obs, b_actions)
-            critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
+            with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+                current_q1, current_q2 = critic(b_obs, b_actions)
+                critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
 
             critic_optimizer.zero_grad()
             critic_loss.backward()
@@ -197,16 +201,17 @@ def train_sac():
 
             # --- Update Actor (Policy) ---
             # Evaluate CURRENT state through the Actor to compute the loss map
-            curr_action, curr_log_prob = actor.get_action(b_obs)
-            
-            # The Critic evaluates these newly proposed actions
-            curr_q1, curr_q2 = critic(b_obs, curr_action)
-            curr_q = torch.min(curr_q1, curr_q2)
-
-            # Loss for the actor is carefully modeled:
-            # We want to MAXIMIZE Expected Q-Value (`curr_q` needs to be high -> negative loss)
-            # AND MAXIMIZE Entropy (`curr_log_prob` needs to be broad -> low log prob)
-            actor_loss = (alpha * curr_log_prob - curr_q).mean()
+            with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+                curr_action, curr_log_prob = actor.get_action(b_obs)
+                
+                # The Critic evaluates these newly proposed actions
+                curr_q1, curr_q2 = critic(b_obs, curr_action)
+                curr_q = torch.min(curr_q1, curr_q2)
+    
+                # Loss for the actor is carefully modeled:
+                # We want to MAXIMIZE Expected Q-Value (`curr_q` needs to be high -> negative loss)
+                # AND MAXIMIZE Entropy (`curr_log_prob` needs to be broad -> low log prob)
+                actor_loss = (alpha * curr_log_prob - curr_q).mean()
 
             actor_optimizer.zero_grad()
             actor_loss.backward()
