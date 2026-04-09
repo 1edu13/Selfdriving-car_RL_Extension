@@ -60,8 +60,8 @@ def train_sac():
     seed = 42
     
     # Checkpoints & Length
-    total_timesteps = 300000        # Prueba de entrenamiento
-    save_freq = 50000
+    total_timesteps = 3000000       # TOTAL training steps (Estandarizado a 3M para comparar)
+    save_freq = 100000              # Frecuencia de autoguardado común
     resume_from_checkpoint = True
     
     # Network hyperparameters

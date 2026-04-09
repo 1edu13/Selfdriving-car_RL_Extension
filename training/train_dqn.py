@@ -30,7 +30,8 @@ def train_dqn():
     run_name = "dqn_baseline"
     env_id = "CarRacing-v2"
     seed = 42
-    total_timesteps = 3000000       # Increased to 3 million steps
+    total_timesteps = 3000000       # Total training steps (Estandarizado a 3M)
+    save_freq = 100000              # Guardar checkpoint cada 100k pasos
     learning_rate = 1e-4            # Lower learning rate for better stability
     buffer_capacity = 100000        # Increased buffer size
     batch_size = 256                # Increased batch size for getting better gradients
@@ -131,10 +132,10 @@ def train_dqn():
             target_net.load_state_dict(policy_net.state_dict())
 
         # 7. Save Model
-        if global_step > 0 and global_step % 500000 == 0:
-            os.makedirs("models/dqn_baseline", exist_ok=True)
-            torch.save(policy_net.state_dict(), f"models/dqn_baseline/dqn_step_{global_step}.pth")
-            print(f"Model saved at step {global_step}")
+        if global_step > 0 and global_step % save_freq == 0:
+            os.makedirs(f"models/{run_name}", exist_ok=True)
+            torch.save(policy_net.state_dict(), f"models/{run_name}/dqn_step_{global_step}.pth")
+            print(f"💾 Checkpoint DQN guardado en el paso {global_step}")
 
 if __name__ == "__main__":
     train_dqn()

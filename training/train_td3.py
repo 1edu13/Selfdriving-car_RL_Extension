@@ -49,8 +49,8 @@ def train_td3():
     seed = 42
     
     # TD3 standard hyperparameters
-    total_timesteps = 300000        # TOTAL training steps (Reducido a 300k para prueba)
-    save_freq = 50000               # Cada cuántos pasos guarda un checkpoint
+    total_timesteps = 3000000       # TOTAL training steps (Revertido a 3M para comparativa)
+    save_freq = 100000              # Frecuencia de autoguardado común para los 3 algoritmos
     resume_from_checkpoint = True   # Si encuentra un checkpoint previo, continua desde él
     learning_rate = 3e-4            # Learning rate for both Actor and Critic
     buffer_capacity = 100000        # Replay buffer size
