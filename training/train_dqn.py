@@ -32,6 +32,7 @@ def train_dqn():
     seed = 42
     total_timesteps = 3000000       # Total training steps (Estandarizado a 3M)
     save_freq = 100000              # Guardar checkpoint cada 100k pasos
+    resume_from_checkpoint = True   # Continúa desde el último si existe
     learning_rate = 1e-4            # Lower learning rate for better stability
     buffer_capacity = 100000        # Increased buffer size
     batch_size = 256                # Increased batch size for getting better gradients
@@ -55,6 +56,17 @@ def train_dqn():
 
     # Initialize Networks
     policy_net = DQNAgent(num_actions=5).to(device)
+    
+    # --- Checkpoint Loading System ---
+    start_step = 0
+    if resume_from_checkpoint and os.path.exists(f"models/{run_name}"):
+        chkp_files = [f for f in os.listdir(f"models/{run_name}") if f.startswith("dqn_step_")]
+        if chkp_files:
+            latest_step = max([int(f.split("_step_")[1].split(".pth")[0]) for f in chkp_files])
+            start_step = latest_step
+            policy_net.load_state_dict(torch.load(f"models/{run_name}/dqn_step_{latest_step}.pth", map_location=device))
+            print(f"\n✅ ¡Checkpoint DQN encontrado! Continuando el entrenamiento desde el paso {latest_step}...\n")
+
     target_net = DQNAgent(num_actions=5).to(device)
     target_net.load_state_dict(policy_net.state_dict())
     target_net.eval() # Target network is strictly for inference
@@ -71,7 +83,7 @@ def train_dqn():
     episode_rewards = []
     current_ep_reward = 0
 
-    for global_step in range(total_timesteps):
+    for global_step in range(start_step, total_timesteps):
         # 1. Epsilon Decay Calculation
         epsilon = max(epsilon_end, epsilon_start - global_step / epsilon_decay)
 
@@ -96,7 +108,8 @@ def train_dqn():
         obs = next_obs
 
         # 5. Train
-        if len(buffer) > start_training_step:
+        # Solo entrena si ha pasado el warmup inicial y hay suficientes muestras
+        if global_step >= start_training_step and len(buffer) >= batch_size:
             b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
 
             b_obs = torch.tensor(b_obs, dtype=torch.float32).to(device)
