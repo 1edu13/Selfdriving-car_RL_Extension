@@ -69,5 +69,30 @@ def make_env(env_id, seed, idx, capture_video, run_name, is_discrete=False):
     return thunk
 
 def get_device():
-    """Returns the device (CPU or CUDA) available."""
+    """Returns the best available device (CUDA GPU or CPU)."""
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def get_device_info():
+    """
+    Returns a dictionary with hardware information for training diagnostics.
+    Used by the master pipeline script to display a summary before training.
+    """
+    import platform
+    info = {
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "os": platform.system(),
+        "python": platform.python_version(),
+        "torch": torch.__version__,
+    }
+
+    if torch.cuda.is_available():
+        info["gpu_name"] = torch.cuda.get_device_name(0)
+        info["gpu_vram_gb"] = round(torch.cuda.get_device_properties(0).total_mem / (1024**3), 1)
+        info["cuda_version"] = torch.version.cuda
+        info["cudnn_version"] = str(torch.backends.cudnn.version())
+    else:
+        info["gpu_name"] = "N/A (CPU mode)"
+        info["gpu_vram_gb"] = 0
+
+    return info

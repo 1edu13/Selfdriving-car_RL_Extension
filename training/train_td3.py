@@ -1,16 +1,17 @@
 """
 Training script for the TD3 agent on CarRacing-v2.
 
-This file orchestrates the training loop for the Twin Delayed DDPG algorithm.
-It handles environment interactions, experience replay, and the delayed network 
-updates that characterize TD3.
+TD3 (Twin Delayed DDPG) is an actor-critic algorithm for continuous control.
+It addresses DDPG's overestimation bias through three key innovations:
+  1. Twin Q-Networks — takes the minimum of two critics to reduce overestimation
+  2. Delayed Policy Updates — updates the actor less frequently than the critic
+  3. Target Policy Smoothing — adds noise to target actions for smoother value estimates
+
+Optimized for: NVIDIA RTX 3050 (4GB VRAM) | AMD Ryzen 7 4800H | 32GB RAM
 """
 
 import torch
 import torch.nn as nn
-
-# --- CPU Hardware Optimization for Intel ---
-torch.set_num_threads(4) # Limit PyTorch threads to avoid gym environment bottleneck
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
@@ -23,10 +24,11 @@ from collections import deque
 from agents.td3_agent import Actor, Critic
 from core.utils import make_env, get_device
 
+
 class ReplayBuffer:
     """
     Experience Replay Buffer for continuous action spaces.
-    Stores transitions (state, action, reward, next_state, done) and samples 
+    Stores transitions (state, action, reward, next_state, done) and samples
     random batches to break the temporal correlation of data for stable training.
     """
     def __init__(self, capacity):
@@ -45,51 +47,62 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.buffer)
 
+
 def train_td3():
-    # --- Hyperparameters Config ---
+    # =====================================================================
+    # HYPERPARAMETERS — Optimized for RTX 3050 (4GB VRAM) + 32GB RAM
+    # =====================================================================
     run_name = "td3_baseline"
     env_id = "CarRacing-v2"
     seed = 42
-    
-    # TD3 standard hyperparameters
-    total_timesteps = 3000000       # TOTAL training steps (Revertido a 3M para comparativa)
-    save_freq = 100000              # Frecuencia de autoguardado común para los 3 algoritmos
-    resume_from_checkpoint = True   # Si encuentra un checkpoint previo, continua desde él
-    learning_rate = 3e-4            # Learning rate for both Actor and Critic
-    buffer_capacity = 100000        # Replay buffer size
-    batch_size = 256                # Size of the training mini-batch
-    gamma = 0.99                    # Discount factor for future rewards
-    tau = 0.005                     # Soft update rate for target networks
-    
-    # Exploration and Noise parameters
-    exploration_noise = 0.1         # Standard deviation of Gaussian noise added to action for exploration
-    policy_noise = 0.2              # Target policy smoothing noise standard deviation
-    noise_clip = 0.5                # Clip max/min target policy noise
-    policy_delay = 2                # In TD3, the actor is updated less frequently (every 2 steps)
-    start_training_step = 25000     # Random exploration phase before learning begins
-    
-    # Define action bounds matching CarRacing continuous actions
+
+    # Training length & checkpointing
+    total_timesteps = 1_500_000       # 1.5M steps — TD3 is sample-efficient for continuous control
+    save_freq = 100_000               # Save checkpoint every 100K steps
+    resume_from_checkpoint = False    # Set to True to resume from the latest checkpoint
+
+    # Network hyperparameters
+    learning_rate = 3e-4              # Standard LR for Actor-Critic methods
+    buffer_capacity = 200_000         # 200K transitions — fits easily in 32GB RAM
+    batch_size = 128                  # Optimized for 4GB VRAM with twin CNN critics
+    gamma = 0.99                      # Discount factor for future rewards
+    tau = 0.005                       # Soft update rate (Polyak averaging) for target networks
+    start_training_step = 25_000      # Random exploration warmup phase
+
+    # TD3-specific parameters
+    exploration_noise = 0.1           # Gaussian noise σ added to actions during data collection
+    policy_noise = 0.2                # Target policy smoothing noise σ
+    noise_clip = 0.5                  # Clip target policy noise to [-0.5, 0.5]
+    policy_delay = 2                  # Update actor every 2 critic updates (core TD3 feature)
+
+    # CarRacing-v2 continuous action bounds: [steering, gas, brake]
     action_low = np.array([-1.0, 0.0, 0.0], dtype=np.float32)
     action_high = np.array([1.0, 1.0, 1.0], dtype=np.float32)
 
-    # --- Setup ---
-    # Set seeds for reproducibility
+    # =====================================================================
+    # SETUP — Device, Environment, Networks
+    # =====================================================================
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
     device = get_device()
-    print(f"Using device: {device}")
+    device_type = device.type
+    use_amp = (device_type == "cuda")
+    print(f"🖥️  Using device: {device} | AMP enabled: {use_amp}")
 
-    # Set up the environment. Note: is_discrete=False because TD3 uses continuous actions.
+    if device_type == "cuda":
+        torch.backends.cudnn.benchmark = True
+
+    # Environment — continuous actions (is_discrete=False)
     envs = gym.vector.SyncVectorEnv(
         [make_env(env_id, seed, 0, False, run_name, is_discrete=False)]
     )
 
-    # 1. Initialize Actor and Critic Networks
+    # Initialize Actor and Twin Critic Networks
     actor = Actor(action_dim=3).to(device)
     critic = Critic(action_dim=3).to(device)
-    
+
     # --- Checkpoint Loading System ---
     start_step = 0
     if resume_from_checkpoint and os.path.exists(f"models/{run_name}"):
@@ -99,17 +112,23 @@ def train_td3():
             start_step = latest_step
             actor.load_state_dict(torch.load(f"models/{run_name}/td3_actor_step_{latest_step}.pth", map_location=device))
             critic.load_state_dict(torch.load(f"models/{run_name}/td3_critic_step_{latest_step}.pth", map_location=device))
-            print(f"\n✅ ¡Checkpoint encontrado! Continuando el entrenamiento desde el paso {latest_step}...\n")
-            
-    actor_target = copy.deepcopy(actor) # Create target network as exact copy
-    actor_optimizer = optim.Adam(actor.parameters(), lr=learning_rate)
+            print(f"\n✅ Checkpoint TD3 found! Resuming training from step {latest_step}...\n")
 
-    critic_target = copy.deepcopy(critic) # Create target network as exact copy
+    # Create target networks as exact copies (for Polyak-averaged Bellman updates)
+    actor_target = copy.deepcopy(actor)
+    critic_target = copy.deepcopy(critic)
+
+    actor_optimizer = optim.Adam(actor.parameters(), lr=learning_rate)
     critic_optimizer = optim.Adam(critic.parameters(), lr=learning_rate)
+
+    # AMP GradScaler for mixed-precision training
+    scaler = torch.amp.GradScaler(enabled=use_amp)
 
     buffer = ReplayBuffer(buffer_capacity)
 
-    # --- Training Loop ---
+    # =====================================================================
+    # TRAINING LOOP
+    # =====================================================================
     obs, _ = envs.reset(seed=seed)
     obs = np.array(obs)
 
@@ -117,29 +136,23 @@ def train_td3():
     current_ep_reward = 0
 
     for global_step in range(start_step, total_timesteps):
-        
-        # 2. Select Action (Exploration vs Exploitation)
-        # For the first 'start_training_step' steps, sample purely random actions
-        # to ensure the buffer has diverse data before updating the networks.
+        # 1. Select Action — random exploration during warmup, then policy + noise
         if global_step < start_training_step:
-            action_np = envs.action_space.sample() # Random continuous action
+            action_np = envs.action_space.sample()
         else:
-            with torch.no_grad(), torch.autocast(device_type="cpu", dtype=torch.bfloat16):
-                obs_tensor = torch.tensor(obs, dtype=torch.float32).to(device)
-                
-                # Get the deterministic action from the actor network
+            with torch.no_grad(), torch.amp.autocast(device_type=device_type, enabled=use_amp):
+                obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
                 action_tensor = actor(obs_tensor)
-                
-                # Add Gaussian noise for exploration during training
-                noise = torch.normal(0, exploration_noise, size=action_tensor.shape).to(device)
+
+                # Add Gaussian exploration noise
+                noise = torch.normal(0, exploration_noise, size=action_tensor.shape, device=device)
                 action_tensor = action_tensor + noise
-                
                 action_np = action_tensor.cpu().numpy()
-                
-                # Ensure the noisy action respects environment limits
+
+                # Clip to environment bounds
                 action_np = np.clip(action_np, action_low, action_high)
 
-        # 3. Step Environment
+        # 2. Environment Step
         next_obs, rewards, terminations, truncations, infos = envs.step(action_np)
         next_obs = np.array(next_obs)
         dones = np.logical_or(terminations, truncations)
@@ -147,90 +160,88 @@ def train_td3():
         current_ep_reward += rewards[0]
         if dones[0]:
             episode_rewards.append(current_ep_reward)
-            print(f"Step: {global_step} | Ep Reward: {current_ep_reward:.2f}")
+            print(f"Step: {global_step:>8,} | Ep Reward: {current_ep_reward:.2f}")
             current_ep_reward = 0
 
-        # 4. Store the transition in the Replay Buffer
+        # 3. Store transition in Replay Buffer
         buffer.push(obs[0], action_np[0], rewards[0], next_obs[0], dones[0])
         obs = next_obs
 
-        # 5. Network Updates (Learning Phase)
-        # We only start updating if we have passed the initial warmup AND we have enough experiences in buffer
+        # 4. Network Updates — after warmup with sufficient buffer data
         if global_step >= start_training_step and len(buffer) >= batch_size:
-            # Sample a mini-batch of transitions
             b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
 
-            b_obs = torch.tensor(b_obs, dtype=torch.float32).to(device)
-            b_actions = torch.tensor(b_actions, dtype=torch.float32).to(device)
-            b_rewards = torch.tensor(b_rewards).unsqueeze(1).to(device)
-            b_next_obs = torch.tensor(b_next_obs, dtype=torch.float32).to(device)
-            b_dones = torch.tensor(b_dones).unsqueeze(1).to(device)
+            b_obs = torch.as_tensor(b_obs, dtype=torch.float32, device=device)
+            b_actions = torch.as_tensor(b_actions, dtype=torch.float32, device=device)
+            b_rewards = torch.as_tensor(b_rewards, device=device).unsqueeze(1)
+            b_next_obs = torch.as_tensor(b_next_obs, dtype=torch.float32, device=device)
+            b_dones = torch.as_tensor(b_dones, device=device).unsqueeze(1)
 
             # --- Update Critic (Every Step) ---
-            with torch.no_grad(), torch.autocast(device_type="cpu", dtype=torch.bfloat16):
-                # Target Policy Smoothing: Add clipped noise to the target actor's next action.
-                # This makes the value estimation more robust and prevents exploitation of peaks in the Q-function.
+            with torch.no_grad(), torch.amp.autocast(device_type=device_type, enabled=use_amp):
+                # Target Policy Smoothing: add clipped noise to target actor's actions
                 next_action = actor_target(b_next_obs)
-                noise = torch.normal(0, policy_noise, size=next_action.shape).to(device)
+                noise = torch.normal(0, policy_noise, size=next_action.shape, device=device)
                 noise = torch.clamp(noise, -noise_clip, noise_clip)
                 smoothed_next_action = next_action + noise
-                
-                # Clip the smoothed action to ensure it remains within valid bounds
-                t_low = torch.tensor(action_low).to(device)
-                t_high = torch.tensor(action_high).to(device)
+
+                # Clip smoothed action to valid bounds
+                t_low = torch.as_tensor(action_low, device=device)
+                t_high = torch.as_tensor(action_high, device=device)
                 smoothed_next_action = torch.max(torch.min(smoothed_next_action, t_high), t_low)
 
-                # Twin Q-Network: Evaluate the next state-action pair using both target critics
+                # Twin Q-targets: take the minimum to fight overestimation (core TD3 feature)
                 target_q1, target_q2 = critic_target(b_next_obs, smoothed_next_action)
-                
-                # Take the minimum of both Q-values to combat overestimation bias (TD3 core feature)
                 target_q = torch.min(target_q1, target_q2)
-                
-                # Compute the Bellman target value
+
+                # Bellman target
                 target_q = b_rewards + gamma * target_q * (1 - b_dones)
 
-            # Get current Q-value estimates from both critics
-            with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+            # Compute critic loss with AMP
+            with torch.amp.autocast(device_type=device_type, enabled=use_amp):
                 current_q1, current_q2 = critic(b_obs, b_actions)
-    
-                # Calculate MSE loss for both critics comparing to the Bellman target
                 critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
 
-            # Optimize Critic networks
+            # Backward pass with GradScaler
             critic_optimizer.zero_grad()
-            critic_loss.backward()
-            critic_optimizer.step()
+            scaler.scale(critic_loss).backward()
+            scaler.unscale_(critic_optimizer)
+            nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
+            scaler.step(critic_optimizer)
+            scaler.update()
 
-            # --- Delayed Actor Update ---
-            # TD3 delays the actor update to ensure the critic has stabilized before optimizing the policy
+            # --- Delayed Actor Update (every `policy_delay` steps) ---
             if global_step % policy_delay == 0:
-                
-                # Actor objective is to maximize the expected Q-value.
-                # We calculate the action proposed by our current actor, then evaluate it using Critic 1.
-                # We use only Critic 1 (q1) for the actor update gradient (it's sufficient).
-                # We use negative Q-value because Optimizers minimize loss
-                with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+                with torch.amp.autocast(device_type=device_type, enabled=use_amp):
+                    # Actor loss: maximize Q-value → minimize -Q(s, π(s))
                     actor_loss = -critic.q1(b_obs, actor(b_obs)).mean()
 
                 actor_optimizer.zero_grad()
-                actor_loss.backward()
-                actor_optimizer.step()
+                scaler.scale(actor_loss).backward()
+                scaler.step(actor_optimizer)
+                scaler.update()
 
-                # --- Soft Updates of Target Networks ---
-                # Slowly blend weights of local networks into target networks using Polyak averaging (tau)
+                # --- Soft Updates (Polyak Averaging) ---
                 for param, target_param in zip(critic.parameters(), critic_target.parameters()):
                     target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
                 for param, target_param in zip(actor.parameters(), actor_target.parameters()):
                     target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
-        # 6. Save Model Checkpoints
+        # 5. Save Checkpoint every 100K steps
         if global_step > 0 and global_step % save_freq == 0:
             os.makedirs(f"models/{run_name}", exist_ok=True)
-            # Both actor and critic are saved for continuation or evaluation
             torch.save(actor.state_dict(), f"models/{run_name}/td3_actor_step_{global_step}.pth")
             torch.save(critic.state_dict(), f"models/{run_name}/td3_critic_step_{global_step}.pth")
-            print(f"💾 Checkpoint guardado temporalmente en el paso {global_step}")
+            print(f"💾 Checkpoint TD3 saved at step {global_step:,}")
+
+    # Save final model
+    os.makedirs(f"models/{run_name}", exist_ok=True)
+    torch.save(actor.state_dict(), f"models/{run_name}/td3_actor_final.pth")
+    torch.save(critic.state_dict(), f"models/{run_name}/td3_critic_final.pth")
+    envs.close()
+    print(f"\n✅ TD3 Training Complete — {total_timesteps:,} steps | Final model saved.")
+
 
 if __name__ == "__main__":
     train_td3()

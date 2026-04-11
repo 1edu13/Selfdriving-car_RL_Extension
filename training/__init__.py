@@ -1,1 +1,1 @@
-from .trai
+# training/__init__.py
