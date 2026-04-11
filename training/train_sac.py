@@ -155,7 +155,7 @@ def train_sac():
     for global_step in range(start_step, total_timesteps):
         # 1. Select Action — random during warmup, stochastic policy after
         if global_step < start_training_step:
-            action_np_normalized = envs.action_space.sample()
+            action_np_normalized = envs.action_space.sample()[0]
         else:
             with torch.no_grad(), autocast(enabled=use_amp):
                 obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
