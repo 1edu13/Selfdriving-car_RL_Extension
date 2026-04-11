@@ -106,7 +106,7 @@ def train_ppo():
         'clip_coef': clip_coef, 'ent_coef': ent_coef,
         'num_updates': num_updates,
         'save_freq_steps': save_freq_updates * batch_size,
-        'frame_skip': 2,
+        'frame_skip': 4,
     })
 
     envs = gym.vector.SyncVectorEnv(

@@ -75,6 +75,7 @@ def print_header(device, use_amp, hp):
     print(f"  Batch Size:     {hp['batch_size']}")
     print(f"  Buffer Size:    {hp['buffer_capacity']:,}")
     print(f"  Frame Skip:     {hp['frame_skip']} (action repeated {hp['frame_skip']}x per step)")
+    print(f"  Gradient Steps: {hp['gradient_steps']} updates per env step")
     print(f"  Learning Rate:  {hp['learning_rate']}")
     print(f"  Gamma:          {hp['gamma']}  |  Tau: {hp['tau']}")
     print(f"  Target Entropy: {hp['target_entropy']}")
@@ -105,6 +106,7 @@ def train_sac():
     tau = 0.005
     start_training_step = 25_000
     target_entropy = -3.0
+    gradient_steps = 4                # GPU updates per env step
 
     # =====================================================================
     # SETUP
@@ -126,7 +128,7 @@ def train_sac():
         'gamma': gamma, 'tau': tau, 'target_entropy': target_entropy,
         'start_training_step': start_training_step,
         'save_freq': save_freq, 'resume': resume_from_checkpoint,
-        'frame_skip': 2,
+        'frame_skip': 4, 'gradient_steps': gradient_steps,
     })
 
     envs = gym.vector.SyncVectorEnv(
@@ -206,63 +208,64 @@ def train_sac():
         buffer.push(obs[0], action_np_normalized, rewards[0], next_obs[0], dones[0])
         obs = next_obs
 
-        # 3. Learning Phase
+        # 3. Learning Phase -- gradient_steps updates per env step
         if global_step >= start_training_step and len(buffer) >= batch_size:
-            b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
+            for _ in range(gradient_steps):
+                b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
 
-            b_obs = torch.as_tensor(b_obs, dtype=torch.float32, device=device)
-            b_actions = torch.as_tensor(b_actions, dtype=torch.float32, device=device)
-            b_rewards = torch.as_tensor(b_rewards, device=device).unsqueeze(1)
-            b_next_obs = torch.as_tensor(b_next_obs, dtype=torch.float32, device=device)
-            b_dones = torch.as_tensor(b_dones, device=device).unsqueeze(1)
+                b_obs = torch.as_tensor(b_obs, dtype=torch.float32, device=device)
+                b_actions = torch.as_tensor(b_actions, dtype=torch.float32, device=device)
+                b_rewards = torch.as_tensor(b_rewards, device=device).unsqueeze(1)
+                b_next_obs = torch.as_tensor(b_next_obs, dtype=torch.float32, device=device)
+                b_dones = torch.as_tensor(b_dones, device=device).unsqueeze(1)
 
-            alpha = log_alpha.exp().detach()
+                alpha = log_alpha.exp().detach()
 
-            # --- Critic Update ---
-            with torch.no_grad(), autocast(enabled=use_amp):
-                next_action, next_log_prob = actor.get_action(b_next_obs)
-                target_q1, target_q2 = critic_target(b_next_obs, next_action)
-                target_q = torch.min(target_q1, target_q2) - alpha * next_log_prob
-                target_q = b_rewards + gamma * target_q * (1 - b_dones)
+                # --- Critic Update ---
+                with torch.no_grad(), autocast(enabled=use_amp):
+                    next_action, next_log_prob = actor.get_action(b_next_obs)
+                    target_q1, target_q2 = critic_target(b_next_obs, next_action)
+                    target_q = torch.min(target_q1, target_q2) - alpha * next_log_prob
+                    target_q = b_rewards + gamma * target_q * (1 - b_dones)
 
-            with autocast(enabled=use_amp):
-                current_q1, current_q2 = critic(b_obs, b_actions)
-                critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
+                with autocast(enabled=use_amp):
+                    current_q1, current_q2 = critic(b_obs, b_actions)
+                    critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
 
-            critic_optimizer.zero_grad()
-            scaler.scale(critic_loss).backward()
-            scaler.unscale_(critic_optimizer)
-            nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
-            scaler.step(critic_optimizer)
-            scaler.update()
+                critic_optimizer.zero_grad()
+                scaler.scale(critic_loss).backward()
+                scaler.unscale_(critic_optimizer)
+                nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
+                scaler.step(critic_optimizer)
+                scaler.update()
 
-            # --- Actor Update ---
-            with autocast(enabled=use_amp):
-                curr_action, curr_log_prob = actor.get_action(b_obs)
-                curr_q1, curr_q2 = critic(b_obs, curr_action)
-                curr_q = torch.min(curr_q1, curr_q2)
-                actor_loss = (alpha * curr_log_prob - curr_q).mean()
+                # --- Actor Update ---
+                with autocast(enabled=use_amp):
+                    curr_action, curr_log_prob = actor.get_action(b_obs)
+                    curr_q1, curr_q2 = critic(b_obs, curr_action)
+                    curr_q = torch.min(curr_q1, curr_q2)
+                    actor_loss = (alpha * curr_log_prob - curr_q).mean()
 
-            actor_optimizer.zero_grad()
-            scaler.scale(actor_loss).backward()
-            scaler.step(actor_optimizer)
-            scaler.update()
+                actor_optimizer.zero_grad()
+                scaler.scale(actor_loss).backward()
+                scaler.step(actor_optimizer)
+                scaler.update()
 
-            # --- Alpha Update ---
-            alpha_loss = -(log_alpha * (curr_log_prob + target_entropy).detach()).mean()
-            alpha_optimizer.zero_grad()
-            alpha_loss.backward()
-            alpha_optimizer.step()
+                # --- Alpha Update ---
+                alpha_loss = -(log_alpha * (curr_log_prob + target_entropy).detach()).mean()
+                alpha_optimizer.zero_grad()
+                alpha_loss.backward()
+                alpha_optimizer.step()
 
-            # --- Soft Updates ---
-            for param, target_param in zip(critic.parameters(), critic_target.parameters()):
-                target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+                # --- Soft Updates ---
+                for param, target_param in zip(critic.parameters(), critic_target.parameters()):
+                    target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
-            # Track metrics
-            recent_critic_losses.append(critic_loss.item())
-            recent_actor_losses.append(actor_loss.item())
-            recent_alphas.append(alpha.item())
-            recent_entropies.append(-curr_log_prob.mean().item())
+                # Track metrics (last grad step)
+                recent_critic_losses.append(critic_loss.item())
+                recent_actor_losses.append(actor_loss.item())
+                recent_alphas.append(alpha.item())
+                recent_entropies.append(-curr_log_prob.mean().item())
 
         # 4. Periodic metrics log
         if global_step > 0 and global_step % log_freq == 0 and recent_critic_losses:

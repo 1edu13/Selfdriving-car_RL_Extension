@@ -60,6 +60,7 @@ def print_header(device, use_amp, hparams):
     print(f"  Batch Size:     {hparams['batch_size']}")
     print(f"  Buffer Size:    {hparams['buffer_capacity']:,}")
     print(f"  Frame Skip:     {hparams['frame_skip']} (action repeated {hparams['frame_skip']}x per step)")
+    print(f"  Gradient Steps: {hparams['gradient_steps']} updates per env step")
     print(f"  Learning Rate:  {hparams['learning_rate']}")
     print(f"  Gamma:          {hparams['gamma']}")
     print(f"  Epsilon Decay:  {hparams['epsilon_decay']:,} steps")
@@ -92,6 +93,7 @@ def train_dqn():
     gamma = 0.99                      # Discount factor
     target_update_freq = 5000         # Hard update target network every 5K steps
     start_training_step = 50_000      # Random warmup phase to fill buffer with diverse data
+    gradient_steps = 4                # GPU updates per env step -- keeps GPU busy while CPU renders
 
     # Epsilon-Greedy exploration parameters
     epsilon_start = 1.0               # Start fully random
@@ -120,7 +122,7 @@ def train_dqn():
         'target_update_freq': target_update_freq,
         'start_training_step': start_training_step,
         'save_freq': save_freq, 'resume': resume_from_checkpoint,
-        'frame_skip': 2,
+        'frame_skip': 4, 'gradient_steps': gradient_steps,
     })
 
     # Environment setup -- DQN requires discrete actions (is_discrete=True)
@@ -200,37 +202,38 @@ def train_dqn():
         buffer.push(obs[0], action_np[0], rewards[0], next_obs[0], dones[0])
         obs = next_obs
 
-        # 5. Train
+        # 5. Train -- gradient_steps updates per env step to maximise GPU utilisation
         if global_step >= start_training_step and len(buffer) >= batch_size:
-            b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
+            for _ in range(gradient_steps):
+                b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
 
-            b_obs = torch.as_tensor(b_obs, dtype=torch.float32, device=device)
-            b_actions = torch.as_tensor(b_actions, dtype=torch.int64, device=device).unsqueeze(1)
-            b_rewards = torch.as_tensor(b_rewards, device=device)
-            b_next_obs = torch.as_tensor(b_next_obs, dtype=torch.float32, device=device)
-            b_dones = torch.as_tensor(b_dones, device=device)
+                b_obs = torch.as_tensor(b_obs, dtype=torch.float32, device=device)
+                b_actions = torch.as_tensor(b_actions, dtype=torch.int64, device=device).unsqueeze(1)
+                b_rewards = torch.as_tensor(b_rewards, device=device)
+                b_next_obs = torch.as_tensor(b_next_obs, dtype=torch.float32, device=device)
+                b_dones = torch.as_tensor(b_dones, device=device)
 
-            with autocast(enabled=use_amp):
-                q_values = policy_net(b_obs)
-                state_action_values = q_values.gather(1, b_actions).squeeze(1)
+                with autocast(enabled=use_amp):
+                    q_values = policy_net(b_obs)
+                    state_action_values = q_values.gather(1, b_actions).squeeze(1)
 
-                with torch.no_grad():
-                    next_q_values = target_net(b_next_obs)
-                    max_next_q_values = next_q_values.max(1)[0]
+                    with torch.no_grad():
+                        next_q_values = target_net(b_next_obs)
+                        max_next_q_values = next_q_values.max(1)[0]
 
-                expected_state_action_values = b_rewards + (gamma * max_next_q_values * (1 - b_dones))
-                loss = loss_fn(state_action_values, expected_state_action_values)
+                    expected_state_action_values = b_rewards + (gamma * max_next_q_values * (1 - b_dones))
+                    loss = loss_fn(state_action_values, expected_state_action_values)
 
-            optimizer.zero_grad()
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            nn.utils.clip_grad_value_(policy_net.parameters(), 100)
-            scaler.step(optimizer)
-            scaler.update()
+                optimizer.zero_grad()
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                nn.utils.clip_grad_value_(policy_net.parameters(), 100)
+                scaler.step(optimizer)
+                scaler.update()
 
-            # Track metrics
-            recent_losses.append(loss.item())
-            recent_q_values.append(q_values.mean().item())
+                # Track metrics (only last gradient step per env step)
+                recent_losses.append(loss.item())
+                recent_q_values.append(q_values.mean().item())
 
         # 6. Update Target Network
         if global_step % target_update_freq == 0:

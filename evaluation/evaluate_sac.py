@@ -1,11 +1,11 @@
 """
 ==============================================================================
-DQN EVALUATION -- CarRacing-v2 (Discrete Actions)
+SAC EVALUATION -- CarRacing-v2 (Max Entropy, Continuous Actions)
 ==============================================================================
-Evaluates the trained DQN agent: records videos, prints per-episode stats,
+Evaluates the trained SAC agent: records videos, prints per-episode stats,
 and saves a CSV with all results.
 
-Usage: python evaluation/evaluate_dqn.py
+Usage: python evaluation/evaluate_sac.py
 """
 
 import sys, os, time, csv
@@ -17,28 +17,35 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from core.utils import DiscreteActionWrapper
 from gymnasium.wrappers import GrayScaleObservation, FrameStack
-from agents.dqn_agent import DQNAgent
+from agents.sac_agent import Actor as SACActor
 
 # =====================================================================
 # CONFIGURATION -- Edit these paths directly
 # =====================================================================
-MODEL_PATH = "models/dqn_baseline/dqn_final.pth"
+MODEL_PATH = "models/sac_baseline/sac_actor_final.pth"
 NUM_EPISODES = 20
 SEED = 42
 RECORD_VIDEO = True
 # =====================================================================
 
 
-def evaluate_dqn():
+def scale_action_for_env(action_np):
+    """Converts SAC's [-1,1] output to CarRacing's [steer, gas, brake] ranges."""
+    env_action = action_np.copy()
+    env_action[1] = (env_action[1] + 1.0) / 2.0  # Gas:   [-1,1] -> [0,1]
+    env_action[2] = (env_action[2] + 1.0) / 2.0  # Brake: [-1,1] -> [0,1]
+    return env_action
+
+
+def evaluate_sac():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_path = os.path.join(PROJECT_ROOT, MODEL_PATH)
 
     # --- Header ---
     print()
     print("=" * 64)
-    print("  DQN EVALUATION -- CarRacing-v2 (Discrete)".center(64))
+    print("  SAC EVALUATION -- CarRacing-v2 (Max Entropy)".center(64))
     print("=" * 64)
     print(f"  Model:       {MODEL_PATH}")
     print(f"  Device:      {device}")
@@ -48,14 +55,14 @@ def evaluate_dqn():
     print()
 
     # --- Load Agent ---
-    agent = DQNAgent(num_actions=5)
+    agent = SACActor(action_dim=3)
     agent.load_state_dict(torch.load(model_path, map_location=device))
     agent.to(device).eval()
     print(f"  [OK] Agent loaded ({sum(p.numel() for p in agent.parameters()):,} params)")
     print()
 
     # --- Results dirs ---
-    results_dir = os.path.join(PROJECT_ROOT, "results", "evaluation", "dqn")
+    results_dir = os.path.join(PROJECT_ROOT, "results", "evaluation", "sac")
     video_dir = os.path.join(results_dir, "videos")
     os.makedirs(video_dir, exist_ok=True)
 
@@ -69,8 +76,7 @@ def evaluate_dqn():
         env = gym.make("CarRacing-v2", render_mode="rgb_array")
         if RECORD_VIDEO:
             env = gym.wrappers.RecordVideo(env, video_dir,
-                name_prefix=f"dqn_ep{ep:02d}", episode_trigger=lambda x: True)
-        env = DiscreteActionWrapper(env)
+                name_prefix=f"sac_ep{ep:02d}", episode_trigger=lambda x: True)
         env = GrayScaleObservation(env, keep_dim=False)
         env = FrameStack(env, 4)
         env.action_space.seed(SEED + ep)
@@ -82,10 +88,14 @@ def evaluate_dqn():
         while not done:
             obs_t = torch.as_tensor(np.array(obs)[np.newaxis], dtype=torch.float32, device=device)
             with torch.no_grad():
-                action = agent.get_action(obs_t, epsilon=0.0, device=device)
-            action_int = int(action.cpu().item())
+                # SAC deterministic mode: use mean action (no sampling noise)
+                action, _ = agent.get_action(obs_t, deterministic=True)
+            action_np = action.cpu().numpy()[0]
 
-            obs, reward, terminated, truncated, _ = env.step(action_int)
+            # Scale from [-1,1] to CarRacing action ranges
+            action_env = scale_action_for_env(action_np)
+
+            obs, reward, terminated, truncated, _ = env.step(action_env)
             total_reward += reward
             steps += 1
             done = terminated or truncated
@@ -103,7 +113,7 @@ def evaluate_dqn():
     r = np.array(all_rewards)
     print()
     print("=" * 64)
-    print("  DQN EVALUATION SUMMARY".center(64))
+    print("  SAC EVALUATION SUMMARY".center(64))
     print("=" * 64)
     print(f"  Reward Mean:      {r.mean():.1f}  (+/- {r.std():.1f})")
     print(f"  Reward Min/Max:   {r.min():.1f} / {r.max():.1f}")
@@ -114,7 +124,7 @@ def evaluate_dqn():
     print("=" * 64)
 
     # --- CSV ---
-    csv_path = os.path.join(results_dir, "dqn_eval_results.csv")
+    csv_path = os.path.join(results_dir, "sac_eval_results.csv")
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["episode", "reward", "steps", "time_s"])
@@ -127,4 +137,4 @@ def evaluate_dqn():
 
 
 if __name__ == "__main__":
-    evaluate_dqn()
+    evaluate_sac()

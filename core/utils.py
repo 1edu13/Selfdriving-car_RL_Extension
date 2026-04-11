@@ -42,9 +42,9 @@ class FrameSkipWrapper(gym.Wrapper):
     the number of expensive env.step() calls by `skip`x.
 
     For CarRacing-v2 at 50 FPS physics:
-      - skip=1 -> agent decides every frame  (50 decisions/sec, slowest training)
-      - skip=2 -> agent decides every 2 frames (25 decisions/sec, good balance)
-      - skip=4 -> agent decides every 4 frames (12.5 decisions/sec, fast but less precise)
+      - skip=1 -> agent decides every frame    (slowest, most precise)
+      - skip=2 -> agent decides every 2 frames (balance)
+      - skip=4 -> agent decides every 4 frames (4x faster, recommended for training)
     """
     def __init__(self, env, skip=2):
         super().__init__(env)
@@ -60,7 +60,7 @@ class FrameSkipWrapper(gym.Wrapper):
         return obs, total_reward, terminated, truncated, info
 
 
-def make_env(env_id, seed, idx, capture_video, run_name, is_discrete=False, frame_skip=2):
+def make_env(env_id, seed, idx, capture_video, run_name, is_discrete=False, frame_skip=4):
     """
     Utility function to create and configure the environment.
 
@@ -71,11 +71,11 @@ def make_env(env_id, seed, idx, capture_video, run_name, is_discrete=False, fram
         capture_video (bool): Whether to save videos of the agent driving.
         run_name (str): Name of the experiment for video saving.
         is_discrete (bool): If True, applies the DiscreteActionWrapper for DQN.
-        frame_skip (int): Number of physics frames to repeat each action (default=2).
-                          Higher = faster training but coarser control.
+        frame_skip (int): Frames to repeat each action. Default=4 for max training speed.
+                          Higher = faster training, coarser control.
     """
     def thunk():
-        # Initialize the environment
+        # Initialize the environment (rgb_array = no window, render into array only)
         env = gym.make(env_id, render_mode="rgb_array")
 
         # Wrapper to record videos (optional, usually for evaluation or the first env)
@@ -86,14 +86,16 @@ def make_env(env_id, seed, idx, capture_video, run_name, is_discrete=False, fram
         if is_discrete:
             env = DiscreteActionWrapper(env)
 
-        # Frame-skip: repeat actions to reduce CPU-bound env.step() calls
+        # Frame-skip: repeat each action for `frame_skip` physics steps.
+        # This is the primary CPU bottleneck reduction — CarRacing renders every frame
+        # even in rgb_array mode. skip=4 cuts env.step() calls by 4x.
         if frame_skip > 1:
             env = FrameSkipWrapper(env, skip=frame_skip)
 
-        # 1. Grayscale Conversion
+        # 1. Grayscale: reduce 96x96x3 -> 96x96x1 (less data to move CPU->GPU)
         env = GrayScaleObservation(env, keep_dim=False)
 
-        # 2. Frame Stacking
+        # 2. Frame Stacking: stack 4 consecutive frames for temporal information
         env = FrameStack(env, 4)
 
         # Seed the environment for reproducibility

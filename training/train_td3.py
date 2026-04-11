@@ -65,6 +65,7 @@ def print_header(device, use_amp, hp):
     print(f"  Batch Size:     {hp['batch_size']}")
     print(f"  Buffer Size:    {hp['buffer_capacity']:,}")
     print(f"  Frame Skip:     {hp['frame_skip']} (action repeated {hp['frame_skip']}x per step)")
+    print(f"  Gradient Steps: {hp['gradient_steps']} updates per env step")
     print(f"  Learning Rate:  {hp['learning_rate']}")
     print(f"  Gamma:          {hp['gamma']}  |  Tau: {hp['tau']}")
     print(f"  Expl. Noise:    {hp['exploration_noise']}  |  Policy Noise: {hp['policy_noise']}")
@@ -95,6 +96,7 @@ def train_td3():
     gamma = 0.99
     tau = 0.005
     start_training_step = 25_000
+    gradient_steps = 4                # GPU updates per env step
 
     exploration_noise = 0.1
     policy_noise = 0.2
@@ -125,7 +127,7 @@ def train_td3():
         'policy_noise': policy_noise, 'policy_delay': policy_delay,
         'start_training_step': start_training_step,
         'save_freq': save_freq, 'resume': resume_from_checkpoint,
-        'frame_skip': 2,
+        'frame_skip': 4, 'gradient_steps': gradient_steps,
     })
 
     envs = gym.vector.SyncVectorEnv(
@@ -201,59 +203,60 @@ def train_td3():
         buffer.push(obs[0], action_np[0], rewards[0], next_obs[0], dones[0])
         obs = next_obs
 
-        # 4. Network Updates
+        # 4. Network Updates -- gradient_steps updates per env step
         if global_step >= start_training_step and len(buffer) >= batch_size:
-            b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
+            for grad_step in range(gradient_steps):
+                b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
 
-            b_obs = torch.as_tensor(b_obs, dtype=torch.float32, device=device)
-            b_actions = torch.as_tensor(b_actions, dtype=torch.float32, device=device)
-            b_rewards = torch.as_tensor(b_rewards, device=device).unsqueeze(1)
-            b_next_obs = torch.as_tensor(b_next_obs, dtype=torch.float32, device=device)
-            b_dones = torch.as_tensor(b_dones, device=device).unsqueeze(1)
+                b_obs = torch.as_tensor(b_obs, dtype=torch.float32, device=device)
+                b_actions = torch.as_tensor(b_actions, dtype=torch.float32, device=device)
+                b_rewards = torch.as_tensor(b_rewards, device=device).unsqueeze(1)
+                b_next_obs = torch.as_tensor(b_next_obs, dtype=torch.float32, device=device)
+                b_dones = torch.as_tensor(b_dones, device=device).unsqueeze(1)
 
-            # --- Critic Update ---
-            with torch.no_grad(), autocast(enabled=use_amp):
-                next_action = actor_target(b_next_obs)
-                noise = torch.normal(0, policy_noise, size=next_action.shape, device=device)
-                noise = torch.clamp(noise, -noise_clip, noise_clip)
-                smoothed_next_action = next_action + noise
-                t_low = torch.as_tensor(action_low, device=device)
-                t_high = torch.as_tensor(action_high, device=device)
-                smoothed_next_action = torch.max(torch.min(smoothed_next_action, t_high), t_low)
-                target_q1, target_q2 = critic_target(b_next_obs, smoothed_next_action)
-                target_q = torch.min(target_q1, target_q2)
-                target_q = b_rewards + gamma * target_q * (1 - b_dones)
+                # --- Critic Update ---
+                with torch.no_grad(), autocast(enabled=use_amp):
+                    next_action = actor_target(b_next_obs)
+                    noise = torch.normal(0, policy_noise, size=next_action.shape, device=device)
+                    noise = torch.clamp(noise, -noise_clip, noise_clip)
+                    smoothed_next_action = next_action + noise
+                    t_low = torch.as_tensor(action_low, device=device)
+                    t_high = torch.as_tensor(action_high, device=device)
+                    smoothed_next_action = torch.max(torch.min(smoothed_next_action, t_high), t_low)
+                    target_q1, target_q2 = critic_target(b_next_obs, smoothed_next_action)
+                    target_q = torch.min(target_q1, target_q2)
+                    target_q = b_rewards + gamma * target_q * (1 - b_dones)
 
-            with autocast(enabled=use_amp):
-                current_q1, current_q2 = critic(b_obs, b_actions)
-                critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
-
-            critic_optimizer.zero_grad()
-            scaler.scale(critic_loss).backward()
-            scaler.unscale_(critic_optimizer)
-            nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
-            scaler.step(critic_optimizer)
-            scaler.update()
-
-            recent_critic_losses.append(critic_loss.item())
-
-            # --- Delayed Actor Update ---
-            if global_step % policy_delay == 0:
                 with autocast(enabled=use_amp):
-                    actor_loss = -critic.q1(b_obs, actor(b_obs)).mean()
+                    current_q1, current_q2 = critic(b_obs, b_actions)
+                    critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
 
-                actor_optimizer.zero_grad()
-                scaler.scale(actor_loss).backward()
-                scaler.step(actor_optimizer)
+                critic_optimizer.zero_grad()
+                scaler.scale(critic_loss).backward()
+                scaler.unscale_(critic_optimizer)
+                nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
+                scaler.step(critic_optimizer)
                 scaler.update()
 
-                recent_actor_losses.append(actor_loss.item())
+                recent_critic_losses.append(critic_loss.item())
 
-                # Soft Updates
-                for param, target_param in zip(critic.parameters(), critic_target.parameters()):
-                    target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
-                for param, target_param in zip(actor.parameters(), actor_target.parameters()):
-                    target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+                # --- Delayed Actor Update (every policy_delay critic updates) ---
+                if grad_step % policy_delay == 0:
+                    with autocast(enabled=use_amp):
+                        actor_loss = -critic.q1(b_obs, actor(b_obs)).mean()
+
+                    actor_optimizer.zero_grad()
+                    scaler.scale(actor_loss).backward()
+                    scaler.step(actor_optimizer)
+                    scaler.update()
+
+                    recent_actor_losses.append(actor_loss.item())
+
+                    # Soft Updates
+                    for param, target_param in zip(critic.parameters(), critic_target.parameters()):
+                        target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+                    for param, target_param in zip(actor.parameters(), actor_target.parameters()):
+                        target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
         # 5. Periodic metrics log
         if global_step > 0 and global_step % log_freq == 0 and recent_critic_losses:
