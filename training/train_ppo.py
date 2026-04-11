@@ -25,52 +25,68 @@ import torch.optim as optim
 from torch.cuda.amp import GradScaler, autocast
 import numpy as np
 import gymnasium as gym
+import time
 
 from agents.ppo_agent import PPOAgent
 from core.utils import make_env, get_device
 
 
+def print_header(device, use_amp, hp):
+    """Prints a formatted training configuration header."""
+    print()
+    print("=" * 64)
+    print("  PPO TRAINING -- CarRacing-v2 (On-Policy)".center(64))
+    print("=" * 64)
+    print(f"  Device:         {device}")
+    print(f"  AMP (FP16):     {'Enabled' if use_amp else 'Disabled'}")
+    print(f"  Total Steps:    {hp['total_timesteps']:,}")
+    print(f"  Num Envs:       {hp['num_envs']}")
+    print(f"  Steps/Rollout:  {hp['num_steps']} (Batch: {hp['batch_size']:,})")
+    print(f"  Minibatch:      {hp['minibatch_size']} x {hp['num_minibatches']} minibatches")
+    print(f"  Update Epochs:  {hp['update_epochs']}")
+    print(f"  Learning Rate:  {hp['learning_rate']}  (Annealing: {hp['anneal_lr']})")
+    print(f"  Gamma:          {hp['gamma']}  |  GAE Lambda: {hp['gae_lambda']}")
+    print(f"  Clip Coef:      {hp['clip_coef']}  |  Ent Coef: {hp['ent_coef']}")
+    print(f"  Total Updates:  {hp['num_updates']}")
+    print(f"  Checkpoints:    Every ~{hp['save_freq_steps']:,} steps")
+    print("=" * 64)
+    print()
+
+
 def train_ppo():
     # =====================================================================
-    # HYPERPARAMETERS — Optimized for RTX 3050 (4GB VRAM) + 32GB RAM
+    # HYPERPARAMETERS -- Optimized for RTX 3050 (4GB VRAM) + 32GB RAM
     # =====================================================================
     run_name = "ppo_baseline"
     env_id = "CarRacing-v2"
     seed = 42
 
-    # Training length
-    total_timesteps = 3_000_000       # 3M steps — on-policy needs more samples than off-policy
+    total_timesteps = 3_000_000
 
-    # PPO core parameters
     learning_rate = 3e-4
-    num_envs = 4                      # 4 parallel envs (reduced from 8 for VRAM constraints)
-    num_steps = 1024                  # Steps per env per rollout
-    anneal_lr = True                  # Linear LR decay
-    gamma = 0.99                      # Discount factor
-    gae_lambda = 0.95                 # GAE smoothing parameter
-    num_minibatches = 16              # Split batch into 16 minibatches
-    update_epochs = 10                # PPO optimization epochs per rollout
-    norm_adv = True                   # Normalize advantages per minibatch
-    clip_coef = 0.2                   # PPO clipping coefficient
-    ent_coef = 0.01                   # Entropy bonus coefficient (encourages exploration)
-    vf_coef = 0.5                     # Value function loss coefficient
-    max_grad_norm = 0.5               # Gradient clipping
+    num_envs = 4
+    num_steps = 1024
+    anneal_lr = True
+    gamma = 0.99
+    gae_lambda = 0.95
+    num_minibatches = 16
+    update_epochs = 10
+    norm_adv = True
+    clip_coef = 0.2
+    ent_coef = 0.01
+    vf_coef = 0.5
+    max_grad_norm = 0.5
 
-    # Derived sizes
-    batch_size = int(num_envs * num_steps)       # 4 * 1024 = 4096
-    minibatch_size = int(batch_size // num_minibatches)  # 4096 / 16 = 256
-
-    # Checkpoint frequency — save approximately every 100K steps
-    # Each update processes batch_size steps, so: 100K / 4096 ≈ 25 updates
-    save_freq_updates = max(1, 100_000 // batch_size)  # = 24 updates ≈ ~98K steps
+    batch_size = int(num_envs * num_steps)       # 4096
+    minibatch_size = int(batch_size // num_minibatches)  # 256
+    save_freq_updates = max(1, 100_000 // batch_size)  # ~25 updates
 
     # =====================================================================
-    # SETUP — Device, Environment, Networks
+    # SETUP
     # =====================================================================
     device = get_device()
     device_type = device.type
     use_amp = (device_type == "cuda")
-    print(f"[*] Using device: {device} | AMP enabled: {use_amp}")
 
     if device_type == "cuda":
         torch.backends.cudnn.benchmark = True
@@ -78,19 +94,28 @@ def train_ppo():
     os.makedirs(f"models/{run_name}", exist_ok=True)
     os.makedirs("results/videos", exist_ok=True)
 
-    # Vectorized environment — SyncVectorEnv for Windows stability
+    num_updates = total_timesteps // batch_size
+
+    print_header(device, use_amp, {
+        'total_timesteps': total_timesteps, 'num_envs': num_envs,
+        'num_steps': num_steps, 'batch_size': batch_size,
+        'minibatch_size': minibatch_size, 'num_minibatches': num_minibatches,
+        'update_epochs': update_epochs, 'learning_rate': learning_rate,
+        'anneal_lr': anneal_lr, 'gamma': gamma, 'gae_lambda': gae_lambda,
+        'clip_coef': clip_coef, 'ent_coef': ent_coef,
+        'num_updates': num_updates,
+        'save_freq_steps': save_freq_updates * batch_size,
+    })
+
     envs = gym.vector.SyncVectorEnv(
         [make_env(env_id, seed + i, i, capture_video=False, run_name=run_name) for i in range(num_envs)]
     )
 
-    # Initialize PPO Agent
     agent = PPOAgent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=learning_rate, eps=1e-5)
-
-    # AMP GradScaler for mixed-precision
     scaler = GradScaler(enabled=use_amp)
 
-    # --- Rollout Storage Buffers ---
+    # Rollout Storage
     obs = torch.zeros((num_steps, num_envs) + envs.single_observation_space.shape).to(device)
     actions = torch.zeros((num_steps, num_envs) + envs.single_action_space.shape).to(device)
     logprobs = torch.zeros((num_steps, num_envs)).to(device)
@@ -98,13 +123,16 @@ def train_ppo():
     dones = torch.zeros((num_steps, num_envs)).to(device)
     values = torch.zeros((num_steps, num_envs)).to(device)
 
-    # Start training
     global_step = 0
     next_obs = torch.Tensor(envs.reset(seed=seed)[0]).to(device)
     next_done = torch.zeros(num_envs).to(device)
-    num_updates = total_timesteps // batch_size
 
-    print(f"[START] Starting PPO Training... Total Updates: {num_updates} | Batch: {batch_size} | Minibatch: {minibatch_size}")
+    # Metric tracking
+    episode_rewards = []
+    train_start_time = time.time()
+
+    print("  Update   | Steps      | PG Loss  | V Loss   | Entropy | LR       | Avg Rew | Progress")
+    print("  " + "-" * 90)
 
     for update in range(1, num_updates + 1):
         # Learning rate annealing
@@ -112,6 +140,8 @@ def train_ppo():
             frac = 1.0 - (update - 1.0) / num_updates
             lrnow = frac * learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
+        else:
+            lrnow = learning_rate
 
         # ===== Phase 1: Rollout Collection =====
         for step in range(0, num_steps):
@@ -134,9 +164,9 @@ def train_ppo():
             if "final_info" in infos:
                 for info in infos["final_info"]:
                     if info and "episode" in info:
-                        print(f"Step: {global_step:>8,} | Ep Reward: {info['episode']['r']:.2f}")
+                        episode_rewards.append(float(info['episode']['r']))
 
-        # ===== Phase 2: GAE (Generalized Advantage Estimation) =====
+        # ===== Phase 2: GAE =====
         with torch.no_grad(), autocast(enabled=use_amp):
             next_value = agent.get_value(next_obs).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
@@ -159,6 +189,11 @@ def train_ppo():
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
 
+        # Track losses for this update
+        update_pg_losses = []
+        update_v_losses = []
+        update_entropies = []
+
         b_inds = np.arange(batch_size)
         for epoch in range(update_epochs):
             np.random.shuffle(b_inds)
@@ -176,22 +211,16 @@ def train_ppo():
                         if norm_adv:
                             mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
-                    # Clipped surrogate objective
                     pg_loss1 = -mb_advantages * ratio
                     pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - clip_coef, 1 + clip_coef)
                     pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                    # Value function loss
                     newvalue = newvalue.view(-1)
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
-
-                    # Entropy bonus
                     entropy_loss = entropy.mean()
 
-                    # Combined loss
                     loss = pg_loss - ent_coef * entropy_loss + vf_coef * v_loss
 
-                # Backward pass with AMP
                 optimizer.zero_grad()
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
@@ -199,16 +228,48 @@ def train_ppo():
                 scaler.step(optimizer)
                 scaler.update()
 
-        # ===== Save Checkpoint every ~100K steps =====
+                update_pg_losses.append(pg_loss.item())
+                update_v_losses.append(v_loss.item())
+                update_entropies.append(entropy_loss.item())
+
+        # ===== Per-Update Logging =====
+        avg_pg = np.mean(update_pg_losses)
+        avg_vl = np.mean(update_v_losses)
+        avg_ent = np.mean(update_entropies)
+        avg_rew = np.mean(episode_rewards[-10:]) if episode_rewards else 0
+        pct = 100 * global_step / total_timesteps
+        elapsed = time.time() - train_start_time
+        sps = global_step / max(elapsed, 1)
+        ms_per_step = 1000 / max(sps, 1)
+
+        print(f"  {update:>8d} | {global_step:>10,} | {avg_pg:>8.4f} | {avg_vl:>8.4f} | "
+              f"{avg_ent:>7.3f} | {lrnow:>8.1e} | {avg_rew:>7.1f} | {pct:>5.1f}% {sps:,.0f}sps {ms_per_step:.2f}ms/step")
+
+        # ===== Save Checkpoint =====
         if update % save_freq_updates == 0:
             save_path = f"models/{run_name}/ppo_step_{global_step}.pth"
             torch.save(agent.state_dict(), save_path)
-            print(f"[SAVE] Checkpoint PPO saved at step {global_step:,}")
+            print(f"  >> [SAVE] Checkpoint: {save_path}")
 
-    # Save final model
+    # Final save
     torch.save(agent.state_dict(), f"models/{run_name}/ppo_final.pth")
     envs.close()
-    print(f"\n[OK] PPO Training Complete -- {total_timesteps:,} steps | Final model saved.")
+
+    total_time = time.time() - train_start_time
+    print()
+    print("=" * 64)
+    print("  PPO TRAINING COMPLETE".center(64))
+    print("=" * 64)
+    print(f"  Total Steps:    {total_timesteps:,}")
+    print(f"  Total Time:     {total_time/3600:.1f} hours")
+    print(f"  Total Updates:  {num_updates}")
+    print(f"  Episodes:       {len(episode_rewards)}")
+    if episode_rewards:
+        print(f"  Best Reward:    {max(episode_rewards):.1f}")
+        print(f"  Final Avg(10):  {np.mean(episode_rewards[-10:]):.1f}")
+    print(f"  Model Saved:    models/{run_name}/ppo_final.pth")
+    print("=" * 64)
+    print()
 
 
 if __name__ == "__main__":

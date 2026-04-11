@@ -25,6 +25,7 @@ import numpy as np
 import gymnasium as gym
 import random
 import copy
+import time
 from collections import deque
 
 from agents.sac_agent import Actor, Critic
@@ -35,7 +36,6 @@ class ReplayBuffer:
     """
     Experience Replay Buffer. Store and sample steps.
     For SAC, we store the NORMALIZED [-1, 1] actions in the buffer, not the environment-scaled ones.
-    This keeps the mathematical integration with the tanh distributions perfectly clean.
     """
     def __init__(self, capacity):
         self.buffer = deque(maxlen=capacity)
@@ -56,9 +56,6 @@ def scale_action_for_env(normalized_action):
     """
     Converts a standard [-1, 1] action vector (from our Actor) into the specialized
     boundaries required by CarRacing-v2.
-    - Steering stays [-1, 1]
-    - Gas is mapped to [0, 1]
-    - Brake is mapped to [0, 1]
     """
     env_action = np.copy(normalized_action)
     env_action[1] = (env_action[1] + 1.0) / 2.0  # Gas mapping
@@ -66,33 +63,50 @@ def scale_action_for_env(normalized_action):
     return env_action
 
 
+def print_header(device, use_amp, hp):
+    """Prints a formatted training configuration header."""
+    print()
+    print("=" * 64)
+    print("  SAC TRAINING -- CarRacing-v2 (Max Entropy)".center(64))
+    print("=" * 64)
+    print(f"  Device:         {device}")
+    print(f"  AMP (FP16):     {'Enabled' if use_amp else 'Disabled'}")
+    print(f"  Total Steps:    {hp['total_timesteps']:,}")
+    print(f"  Batch Size:     {hp['batch_size']}")
+    print(f"  Buffer Size:    {hp['buffer_capacity']:,}")
+    print(f"  Learning Rate:  {hp['learning_rate']}")
+    print(f"  Gamma:          {hp['gamma']}  |  Tau: {hp['tau']}")
+    print(f"  Target Entropy: {hp['target_entropy']}")
+    print(f"  Warmup:         {hp['start_training_step']:,} random steps")
+    print(f"  Checkpoints:    Every {hp['save_freq']:,} steps")
+    print(f"  Resume:         {hp['resume']}")
+    print("=" * 64)
+    print()
+
+
 def train_sac():
     # =====================================================================
-    # HYPERPARAMETERS — Optimized for RTX 3050 (4GB VRAM) + 32GB RAM
+    # HYPERPARAMETERS -- Optimized for RTX 3050 (4GB VRAM) + 32GB RAM
     # =====================================================================
     run_name = "sac_baseline"
     env_id = "CarRacing-v2"
     seed = 42
 
-    # Training length & checkpointing
-    total_timesteps = 1_500_000       # 1.5M steps — SAC is very sample-efficient with entropy exploration
-    save_freq = 100_000               # Save checkpoint every 100K steps
-    resume_from_checkpoint = False    # Set to True to resume from the latest checkpoint
+    total_timesteps = 1_500_000
+    save_freq = 100_000
+    log_freq = 10_000
+    resume_from_checkpoint = False
 
-    # Network hyperparameters
-    learning_rate = 3e-4              # Standard LR for Actor-Critic methods
-    buffer_capacity = 200_000         # 200K transitions — 32GB RAM handles this easily
-    batch_size = 128                  # Optimized for 4GB VRAM with twin CNN critics
-    gamma = 0.99                      # Discount factor
-    tau = 0.005                       # Soft update rate for target critic
-    start_training_step = 25_000      # Random exploration warmup
-
-    # SAC Auto-Tuning Entropy
-    # Target entropy heuristic: -dim(A) = -3 for 3D action space (steering, gas, brake)
+    learning_rate = 3e-4
+    buffer_capacity = 200_000
+    batch_size = 128
+    gamma = 0.99
+    tau = 0.005
+    start_training_step = 25_000
     target_entropy = -3.0
 
     # =====================================================================
-    # SETUP — Device, Environment, Networks
+    # SETUP
     # =====================================================================
     random.seed(seed)
     np.random.seed(seed)
@@ -101,21 +115,25 @@ def train_sac():
     device = get_device()
     device_type = device.type
     use_amp = (device_type == "cuda")
-    print(f"[*] Using device: {device} | AMP enabled: {use_amp}")
 
     if device_type == "cuda":
         torch.backends.cudnn.benchmark = True
 
-    # Environment — continuous actions
+    print_header(device, use_amp, {
+        'total_timesteps': total_timesteps, 'batch_size': batch_size,
+        'buffer_capacity': buffer_capacity, 'learning_rate': learning_rate,
+        'gamma': gamma, 'tau': tau, 'target_entropy': target_entropy,
+        'start_training_step': start_training_step,
+        'save_freq': save_freq, 'resume': resume_from_checkpoint,
+    })
+
     envs = gym.vector.SyncVectorEnv(
         [make_env(env_id, seed, 0, False, run_name, is_discrete=False)]
     )
 
-    # Initialize Actor (Stochastic Policy) and Twin Critic
     actor = Actor(action_dim=3).to(device)
     critic = Critic(action_dim=3).to(device)
 
-    # --- Checkpoint Loading System ---
     start_step = 0
     if resume_from_checkpoint and os.path.exists(f"models/{run_name}"):
         chkp_files = [f for f in os.listdir(f"models/{run_name}") if f.startswith("sac_actor_step_")]
@@ -124,23 +142,16 @@ def train_sac():
             start_step = latest_step
             actor.load_state_dict(torch.load(f"models/{run_name}/sac_actor_step_{latest_step}.pth", map_location=device))
             critic.load_state_dict(torch.load(f"models/{run_name}/sac_critic_step_{latest_step}.pth", map_location=device))
-            print(f"\n[OK] Checkpoint SAC found! Resuming training from step {latest_step}...\n")
+            print(f"  >> Checkpoint found! Resuming from step {latest_step:,}\n")
 
-    # Target Critic for Bellman updates (SAC doesn't use a Target Actor)
     critic_target = copy.deepcopy(critic)
-
-    # Optimizers
     actor_optimizer = optim.Adam(actor.parameters(), lr=learning_rate)
     critic_optimizer = optim.Adam(critic.parameters(), lr=learning_rate)
 
-    # Learnable entropy temperature (alpha)
-    # log_alpha is optimized to ensure alpha stays positive when exponentiated
     log_alpha = torch.zeros(1, requires_grad=True, device=device)
     alpha_optimizer = optim.Adam([log_alpha], lr=learning_rate)
 
-    # AMP GradScaler for mixed-precision training
     scaler = GradScaler(enabled=use_amp)
-
     buffer = ReplayBuffer(buffer_capacity)
 
     # =====================================================================
@@ -151,9 +162,19 @@ def train_sac():
 
     episode_rewards = []
     current_ep_reward = 0
+    episode_count = 0
+
+    recent_critic_losses = []
+    recent_actor_losses = []
+    recent_alphas = []
+    recent_entropies = []
+    train_start_time = time.time()
+
+    print("  Step         | Crit. L  | Act. L   | Alpha  | Entropy | Buffer  | Ep Rew  | Avg(10)")
+    print("  " + "-" * 90)
 
     for global_step in range(start_step, total_timesteps):
-        # 1. Select Action — random during warmup, stochastic policy after
+        # 1. Select Action
         if global_step < start_training_step:
             action_np_normalized = envs.action_space.sample()[0]
         else:
@@ -162,7 +183,6 @@ def train_sac():
                 action_tensor, _ = actor.get_action(obs_tensor)
                 action_np_normalized = action_tensor.cpu().numpy()[0]
 
-        # Convert [-1, 1] actions into CarRacing-v2 format
         action_env = scale_action_for_env(action_np_normalized)
 
         # 2. Environment Step
@@ -173,15 +193,18 @@ def train_sac():
         current_ep_reward += rewards[0]
         if dones[0]:
             episode_rewards.append(current_ep_reward)
-            print(f"Step: {global_step:>8,} | Ep Reward: {current_ep_reward:.2f}")
+            episode_count += 1
+            avg_rew = np.mean(episode_rewards[-10:])
+            alpha_val = log_alpha.exp().item()
+            print(f"  {global_step:>13,} | {'':>8s} | {'':>8s} | {alpha_val:>6.3f} | "
+                  f"{'':>7s} | {len(buffer):>7,} | {current_ep_reward:>7.1f} | {avg_rew:>7.1f}")
             current_ep_reward = 0
 
-        # CRITICAL: Store NORMALIZED [-1,1] actions in buffer (not env-scaled)
-        # The Actor operates in squashed space, so the Critic must learn over that same space
+        # Store NORMALIZED action in buffer
         buffer.push(obs[0], action_np_normalized, rewards[0], next_obs[0], dones[0])
         obs = next_obs
 
-        # 3. Neural Network Learning Phase
+        # 3. Learning Phase
         if global_step >= start_training_step and len(buffer) >= batch_size:
             b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
 
@@ -191,19 +214,13 @@ def train_sac():
             b_next_obs = torch.as_tensor(b_next_obs, dtype=torch.float32, device=device)
             b_dones = torch.as_tensor(b_dones, device=device).unsqueeze(1)
 
-            # Dynamic alpha (temperature)
             alpha = log_alpha.exp().detach()
 
-            # --- Update Critic (Q-Networks) ---
+            # --- Critic Update ---
             with torch.no_grad(), autocast(enabled=use_amp):
-                # Sample NEXT actions from current policy
                 next_action, next_log_prob = actor.get_action(b_next_obs)
-
-                # Twin Q-targets with entropy penalty
                 target_q1, target_q2 = critic_target(b_next_obs, next_action)
                 target_q = torch.min(target_q1, target_q2) - alpha * next_log_prob
-
-                # Soft Q-Target: r + γ * (Q_target - α * log_π)
                 target_q = b_rewards + gamma * target_q * (1 - b_dones)
 
             with autocast(enabled=use_amp):
@@ -217,14 +234,11 @@ def train_sac():
             scaler.step(critic_optimizer)
             scaler.update()
 
-            # --- Update Actor (Policy) ---
+            # --- Actor Update ---
             with autocast(enabled=use_amp):
                 curr_action, curr_log_prob = actor.get_action(b_obs)
                 curr_q1, curr_q2 = critic(b_obs, curr_action)
                 curr_q = torch.min(curr_q1, curr_q2)
-
-                # Actor loss: maximize Q-value AND maximize entropy
-                # = minimize (α * log_π(a|s) - Q(s,a))
                 actor_loss = (alpha * curr_log_prob - curr_q).mean()
 
             actor_optimizer.zero_grad()
@@ -232,31 +246,68 @@ def train_sac():
             scaler.step(actor_optimizer)
             scaler.update()
 
-            # --- Update Temperature (Alpha) ---
-            # Auto-tune α to match target entropy: if entropy < target → increase α (explore more)
+            # --- Alpha Update ---
             alpha_loss = -(log_alpha * (curr_log_prob + target_entropy).detach()).mean()
-
             alpha_optimizer.zero_grad()
             alpha_loss.backward()
             alpha_optimizer.step()
 
-            # --- Soft Updates (Polyak Averaging) ---
+            # --- Soft Updates ---
             for param, target_param in zip(critic.parameters(), critic_target.parameters()):
                 target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
-        # 4. Checkpoint Saving every 100K steps
+            # Track metrics
+            recent_critic_losses.append(critic_loss.item())
+            recent_actor_losses.append(actor_loss.item())
+            recent_alphas.append(alpha.item())
+            recent_entropies.append(-curr_log_prob.mean().item())
+
+        # 4. Periodic metrics log
+        if global_step > 0 and global_step % log_freq == 0 and recent_critic_losses:
+            elapsed = time.time() - train_start_time
+            sps = (global_step - start_step) / max(elapsed, 1)
+            ms_per_step = 1000 / max(sps, 1)
+            avg_cl = np.mean(recent_critic_losses[-500:])
+            avg_al = np.mean(recent_actor_losses[-500:])
+            avg_alpha = np.mean(recent_alphas[-500:])
+            avg_ent = np.mean(recent_entropies[-500:])
+            avg_rew = np.mean(episode_rewards[-10:]) if episode_rewards else 0
+            pct = 100 * global_step / total_timesteps
+            print(f"  {global_step:>13,} | {avg_cl:>8.4f} | {avg_al:>8.4f} | {avg_alpha:>6.3f} | "
+                  f"{avg_ent:>7.2f} | {len(buffer):>7,} | {'':>7s} | {avg_rew:>7.1f}  "
+                  f"[{pct:.1f}% {sps:,.0f}sps {ms_per_step:.2f}ms/step]")
+
+        # 5. Checkpoint
         if global_step > 0 and global_step % save_freq == 0:
             os.makedirs(f"models/{run_name}", exist_ok=True)
             torch.save(actor.state_dict(), f"models/{run_name}/sac_actor_step_{global_step}.pth")
             torch.save(critic.state_dict(), f"models/{run_name}/sac_critic_step_{global_step}.pth")
-            print(f"[SAVE] Checkpoint SAC saved at step {global_step:,}")
+            print(f"  >> [SAVE] Checkpoint: models/{run_name}/sac_*_step_{global_step}.pth")
 
-    # Save final model
+    # Final save
     os.makedirs(f"models/{run_name}", exist_ok=True)
     torch.save(actor.state_dict(), f"models/{run_name}/sac_actor_final.pth")
     torch.save(critic.state_dict(), f"models/{run_name}/sac_critic_final.pth")
     envs.close()
-    print(f"\n[OK] SAC Training Complete -- {total_timesteps:,} steps | Final model saved.")
+
+    total_time = time.time() - train_start_time
+    print()
+    print("=" * 64)
+    print("  SAC TRAINING COMPLETE".center(64))
+    print("=" * 64)
+    print(f"  Total Steps:    {total_timesteps:,}")
+    print(f"  Total Time:     {total_time/3600:.1f} hours")
+    print(f"  Episodes:       {episode_count}")
+    if episode_rewards:
+        print(f"  Best Reward:    {max(episode_rewards):.1f}")
+        print(f"  Final Avg(10):  {np.mean(episode_rewards[-10:]):.1f}")
+    if recent_alphas:
+        print(f"  Final Alpha:    {np.mean(recent_alphas[-100:]):.4f}")
+    if recent_entropies:
+        print(f"  Final Entropy:  {np.mean(recent_entropies[-100:]):.2f}")
+    print(f"  Model Saved:    models/{run_name}/sac_*_final.pth")
+    print("=" * 64)
+    print()
 
 
 if __name__ == "__main__":

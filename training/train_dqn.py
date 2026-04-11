@@ -21,6 +21,7 @@ from torch.cuda.amp import GradScaler, autocast
 import numpy as np
 import gymnasium as gym
 import random
+import time
 from collections import deque
 
 from agents.dqn_agent import DQNAgent
@@ -47,22 +48,45 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
+def print_header(device, use_amp, hparams):
+    """Prints a formatted training configuration header."""
+    print()
+    print("=" * 64)
+    print("  DQN TRAINING -- CarRacing-v2 (Discrete Actions)".center(64))
+    print("=" * 64)
+    print(f"  Device:         {device}")
+    print(f"  AMP (FP16):     {'Enabled' if use_amp else 'Disabled'}")
+    print(f"  Total Steps:    {hparams['total_timesteps']:,}")
+    print(f"  Batch Size:     {hparams['batch_size']}")
+    print(f"  Buffer Size:    {hparams['buffer_capacity']:,}")
+    print(f"  Learning Rate:  {hparams['learning_rate']}")
+    print(f"  Gamma:          {hparams['gamma']}")
+    print(f"  Epsilon Decay:  {hparams['epsilon_decay']:,} steps")
+    print(f"  Target Update:  Every {hparams['target_update_freq']:,} steps")
+    print(f"  Warmup:         {hparams['start_training_step']:,} random steps")
+    print(f"  Checkpoints:    Every {hparams['save_freq']:,} steps")
+    print(f"  Resume:         {hparams['resume']}")
+    print("=" * 64)
+    print()
+
+
 def train_dqn():
     # =====================================================================
-    # HYPERPARAMETERS — Optimized for RTX 3050 (4GB VRAM) + 32GB RAM
+    # HYPERPARAMETERS -- Optimized for RTX 3050 (4GB VRAM) + 32GB RAM
     # =====================================================================
     run_name = "dqn_baseline"
     env_id = "CarRacing-v2"
     seed = 42
 
     # Training length & checkpointing
-    total_timesteps = 2_000_000       # 2M steps — sufficient for DQN on CarRacing with discrete actions
+    total_timesteps = 2_000_000       # 2M steps -- sufficient for DQN on CarRacing with discrete actions
     save_freq = 100_000               # Save checkpoint every 100K steps
+    log_freq = 10_000                 # Print training metrics every 10K steps
     resume_from_checkpoint = False    # Set to True to resume from the latest checkpoint
 
     # Network hyperparameters
     learning_rate = 1e-4              # Lower LR for better stability with DQN
-    buffer_capacity = 200_000         # 200K transitions — fits easily in 32GB RAM
+    buffer_capacity = 200_000         # 200K transitions -- fits easily in 32GB RAM
     batch_size = 128                  # Optimized for 4GB VRAM with single CNN forward/backward
     gamma = 0.99                      # Discount factor
     target_update_freq = 5000         # Hard update target network every 5K steps
@@ -74,22 +98,30 @@ def train_dqn():
     epsilon_decay = 500_000           # Linear decay over 500K steps
 
     # =====================================================================
-    # SETUP — Device, Environment, Networks
+    # SETUP -- Device, Environment, Networks
     # =====================================================================
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
     device = get_device()
-    device_type = device.type  # "cuda" or "cpu" — used for AMP autocast
+    device_type = device.type
     use_amp = (device_type == "cuda")
-    print(f"[*] Using device: {device} | AMP enabled: {use_amp}")
 
-    # Enable cuDNN benchmark for fixed-size inputs (96x96) — finds fastest convolution algorithm
     if device_type == "cuda":
         torch.backends.cudnn.benchmark = True
 
-    # Environment setup — DQN requires discrete actions (is_discrete=True)
+    # Print configuration header
+    print_header(device, use_amp, {
+        'total_timesteps': total_timesteps, 'batch_size': batch_size,
+        'buffer_capacity': buffer_capacity, 'learning_rate': learning_rate,
+        'gamma': gamma, 'epsilon_decay': epsilon_decay,
+        'target_update_freq': target_update_freq,
+        'start_training_step': start_training_step,
+        'save_freq': save_freq, 'resume': resume_from_checkpoint,
+    })
+
+    # Environment setup -- DQN requires discrete actions (is_discrete=True)
     envs = gym.vector.SyncVectorEnv(
         [make_env(env_id, seed, 0, False, run_name, is_discrete=True)]
     )
@@ -106,17 +138,14 @@ def train_dqn():
             latest_step = max([int(f.split("_step_")[1].split(".pth")[0]) for f in chkp_files])
             start_step = latest_step
             policy_net.load_state_dict(torch.load(f"models/{run_name}/dqn_step_{latest_step}.pth", map_location=device))
-            print(f"\n[OK] Checkpoint DQN found! Resuming training from step {latest_step}...\n")
+            print(f"  >> Checkpoint found! Resuming from step {latest_step:,}\n")
 
     # Synchronize target network with policy network
     target_net.load_state_dict(policy_net.state_dict())
-    target_net.eval()  # Target network is strictly for inference
+    target_net.eval()
 
     optimizer = optim.Adam(policy_net.parameters(), lr=learning_rate)
     loss_fn = nn.MSELoss()
-
-    # AMP GradScaler — scales gradients to prevent underflow in FP16
-    # When enabled=False (CPU), all scaler methods become transparent no-ops
     scaler = GradScaler(enabled=use_amp)
 
     buffer = ReplayBuffer(buffer_capacity)
@@ -129,12 +158,22 @@ def train_dqn():
 
     episode_rewards = []
     current_ep_reward = 0
+    episode_count = 0
+
+    # Metric tracking for periodic logging
+    recent_losses = []
+    recent_q_values = []
+    train_start_time = time.time()
+    last_log_step = start_step
+
+    print("  Step         | Epsilon | Loss     | Avg Q   | Buffer  | Ep Reward | Avg(10)")
+    print("  " + "-" * 80)
 
     for global_step in range(start_step, total_timesteps):
-        # 1. Epsilon Decay — Linear decay from 1.0 to 0.05 over 500K steps
+        # 1. Epsilon Decay
         epsilon = max(epsilon_end, epsilon_start - global_step / epsilon_decay)
 
-        # 2. Select Action using epsilon-greedy strategy
+        # 2. Select Action
         obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
         with torch.no_grad(), autocast(enabled=use_amp):
             action = policy_net.get_action(obs_tensor, epsilon, device)
@@ -148,14 +187,18 @@ def train_dqn():
         current_ep_reward += rewards[0]
         if dones[0]:
             episode_rewards.append(current_ep_reward)
-            print(f"Step: {global_step:>8,} | Epsilon: {epsilon:.3f} | Ep Reward: {current_ep_reward:.2f}")
+            episode_count += 1
+            avg_reward = np.mean(episode_rewards[-10:])
+            print(f"  {global_step:>13,} | {epsilon:.3f}   | "
+                  f"{'---':>8s} | {'---':>7s} | {len(buffer):>7,} | "
+                  f"{current_ep_reward:>9.1f} | {avg_reward:>7.1f}")
             current_ep_reward = 0
 
-        # 4. Store transition in Replay Buffer
+        # 4. Store in Buffer
         buffer.push(obs[0], action_np[0], rewards[0], next_obs[0], dones[0])
         obs = next_obs
 
-        # 5. Train — Only after warmup and with sufficient buffer data
+        # 5. Train
         if global_step >= start_training_step and len(buffer) >= batch_size:
             b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
 
@@ -165,46 +208,72 @@ def train_dqn():
             b_next_obs = torch.as_tensor(b_next_obs, dtype=torch.float32, device=device)
             b_dones = torch.as_tensor(b_dones, device=device)
 
-            # Forward pass with AMP autocast (FP16 on GPU for ~2x speedup)
             with autocast(enabled=use_amp):
-                # Compute Q(s_t, a) — the Q-value for the action we actually took
                 q_values = policy_net(b_obs)
                 state_action_values = q_values.gather(1, b_actions).squeeze(1)
 
-                # Compute V(s_{t+1}) using frozen Target Network (no gradients)
                 with torch.no_grad():
                     next_q_values = target_net(b_next_obs)
                     max_next_q_values = next_q_values.max(1)[0]
 
-                # Bellman Equation: Q_target = r + γ * max_a' Q_target(s', a') * (1 - done)
                 expected_state_action_values = b_rewards + (gamma * max_next_q_values * (1 - b_dones))
-
-                # MSE Loss between predicted and target Q-values
                 loss = loss_fn(state_action_values, expected_state_action_values)
 
-            # Backward pass with AMP GradScaler
             optimizer.zero_grad()
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
-            nn.utils.clip_grad_value_(policy_net.parameters(), 100)  # Gradient clipping for stability
+            nn.utils.clip_grad_value_(policy_net.parameters(), 100)
             scaler.step(optimizer)
             scaler.update()
 
-        # 6. Hard Update Target Network — Copy policy weights to target every N steps
+            # Track metrics
+            recent_losses.append(loss.item())
+            recent_q_values.append(q_values.mean().item())
+
+        # 6. Update Target Network
         if global_step % target_update_freq == 0:
             target_net.load_state_dict(policy_net.state_dict())
 
-        # 7. Save Checkpoint every 100K steps
+        # 7. Periodic training metrics log
+        if global_step > 0 and global_step % log_freq == 0 and recent_losses:
+            elapsed = time.time() - train_start_time
+            steps_per_sec = (global_step - start_step) / max(elapsed, 1)
+            ms_per_step = 1000 / max(steps_per_sec, 1)
+            avg_loss = np.mean(recent_losses[-1000:])
+            avg_q = np.mean(recent_q_values[-1000:])
+            avg_rew = np.mean(episode_rewards[-10:]) if episode_rewards else 0
+            pct = 100 * global_step / total_timesteps
+
+            print(f"  {global_step:>13,} | {epsilon:.3f}   | "
+                  f"{avg_loss:>8.4f} | {avg_q:>7.2f} | {len(buffer):>7,} | "
+                  f"{'':>9s} | {avg_rew:>7.1f}  "
+                  f"[{pct:>5.1f}% | {steps_per_sec:,.0f} sps | {ms_per_step:.2f} ms/step]")
+
+        # 8. Save Checkpoint
         if global_step > 0 and global_step % save_freq == 0:
             os.makedirs(f"models/{run_name}", exist_ok=True)
             torch.save(policy_net.state_dict(), f"models/{run_name}/dqn_step_{global_step}.pth")
-            print(f"[SAVE] Checkpoint DQN saved at step {global_step:,}")
+            print(f"  >> [SAVE] Checkpoint saved: models/{run_name}/dqn_step_{global_step}.pth")
 
     # Save final model
     os.makedirs(f"models/{run_name}", exist_ok=True)
     torch.save(policy_net.state_dict(), f"models/{run_name}/dqn_final.pth")
     envs.close()
-    print(f"\n[OK] DQN Training Complete -- {total_timesteps:,} steps | Final model saved.")
+
+    total_time = time.time() - train_start_time
+    print()
+    print("=" * 64)
+    print("  DQN TRAINING COMPLETE".center(64))
+    print("=" * 64)
+    print(f"  Total Steps:    {total_timesteps:,}")
+    print(f"  Total Time:     {total_time/3600:.1f} hours")
+    print(f"  Episodes:       {episode_count}")
+    if episode_rewards:
+        print(f"  Best Reward:    {max(episode_rewards):.1f}")
+        print(f"  Final Avg(10):  {np.mean(episode_rewards[-10:]):.1f}")
+    print(f"  Model Saved:    models/{run_name}/dqn_final.pth")
+    print("=" * 64)
+    print()
 
 
 if __name__ == "__main__":
