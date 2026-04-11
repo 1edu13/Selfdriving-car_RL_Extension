@@ -48,6 +48,7 @@ def print_header(device, use_amp, hp):
     print(f"  Gamma:          {hp['gamma']}  |  GAE Lambda: {hp['gae_lambda']}")
     print(f"  Clip Coef:      {hp['clip_coef']}  |  Ent Coef: {hp['ent_coef']}")
     print(f"  Total Updates:  {hp['num_updates']}")
+    print(f"  Frame Skip:     {hp['frame_skip']} (action repeated {hp['frame_skip']}x per step)")
     print(f"  Checkpoints:    Every ~{hp['save_freq_steps']:,} steps")
     print("=" * 64)
     print()
@@ -105,6 +106,7 @@ def train_ppo():
         'clip_coef': clip_coef, 'ent_coef': ent_coef,
         'num_updates': num_updates,
         'save_freq_steps': save_freq_updates * batch_size,
+        'frame_skip': 2,
     })
 
     envs = gym.vector.SyncVectorEnv(

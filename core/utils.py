@@ -31,7 +31,36 @@ class DiscreteActionWrapper(gym.ActionWrapper):
         # Convert the integer action back to the continuous array
         return self._action_mapping[int(act)]
 
-def make_env(env_id, seed, idx, capture_video, run_name, is_discrete=False):
+class FrameSkipWrapper(gym.Wrapper):
+    """
+    Action-repeat wrapper: repeats the agent's chosen action for `skip` consecutive
+    physics frames, summing the rewards. Returns the observation from the LAST frame.
+
+    This is the single most effective speedup for CPU-bottlenecked RL training:
+    the environment's physics simulation and rendering (CPU) is the bottleneck,
+    not the neural network forward pass (GPU). By repeating actions, we cut
+    the number of expensive env.step() calls by `skip`x.
+
+    For CarRacing-v2 at 50 FPS physics:
+      - skip=1 -> agent decides every frame  (50 decisions/sec, slowest training)
+      - skip=2 -> agent decides every 2 frames (25 decisions/sec, good balance)
+      - skip=4 -> agent decides every 4 frames (12.5 decisions/sec, fast but less precise)
+    """
+    def __init__(self, env, skip=2):
+        super().__init__(env)
+        self._skip = skip
+
+    def step(self, action):
+        total_reward = 0.0
+        for _ in range(self._skip):
+            obs, reward, terminated, truncated, info = self.env.step(action)
+            total_reward += reward
+            if terminated or truncated:
+                break
+        return obs, total_reward, terminated, truncated, info
+
+
+def make_env(env_id, seed, idx, capture_video, run_name, is_discrete=False, frame_skip=2):
     """
     Utility function to create and configure the environment.
 
@@ -42,6 +71,8 @@ def make_env(env_id, seed, idx, capture_video, run_name, is_discrete=False):
         capture_video (bool): Whether to save videos of the agent driving.
         run_name (str): Name of the experiment for video saving.
         is_discrete (bool): If True, applies the DiscreteActionWrapper for DQN.
+        frame_skip (int): Number of physics frames to repeat each action (default=2).
+                          Higher = faster training but coarser control.
     """
     def thunk():
         # Initialize the environment
@@ -54,6 +85,10 @@ def make_env(env_id, seed, idx, capture_video, run_name, is_discrete=False):
         # Apply discretization if using DQN
         if is_discrete:
             env = DiscreteActionWrapper(env)
+
+        # Frame-skip: repeat actions to reduce CPU-bound env.step() calls
+        if frame_skip > 1:
+            env = FrameSkipWrapper(env, skip=frame_skip)
 
         # 1. Grayscale Conversion
         env = GrayScaleObservation(env, keep_dim=False)

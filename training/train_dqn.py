@@ -59,6 +59,7 @@ def print_header(device, use_amp, hparams):
     print(f"  Total Steps:    {hparams['total_timesteps']:,}")
     print(f"  Batch Size:     {hparams['batch_size']}")
     print(f"  Buffer Size:    {hparams['buffer_capacity']:,}")
+    print(f"  Frame Skip:     {hparams['frame_skip']} (action repeated {hparams['frame_skip']}x per step)")
     print(f"  Learning Rate:  {hparams['learning_rate']}")
     print(f"  Gamma:          {hparams['gamma']}")
     print(f"  Epsilon Decay:  {hparams['epsilon_decay']:,} steps")
@@ -87,7 +88,7 @@ def train_dqn():
     # Network hyperparameters
     learning_rate = 1e-4              # Lower LR for better stability with DQN
     buffer_capacity = 200_000         # 200K transitions -- fits easily in 32GB RAM
-    batch_size = 128                  # Optimized for 4GB VRAM with single CNN forward/backward
+    batch_size = 256                  # Optimized for 4GB VRAM with single CNN forward/backward
     gamma = 0.99                      # Discount factor
     target_update_freq = 5000         # Hard update target network every 5K steps
     start_training_step = 50_000      # Random warmup phase to fill buffer with diverse data
@@ -119,6 +120,7 @@ def train_dqn():
         'target_update_freq': target_update_freq,
         'start_training_step': start_training_step,
         'save_freq': save_freq, 'resume': resume_from_checkpoint,
+        'frame_skip': 2,
     })
 
     # Environment setup -- DQN requires discrete actions (is_discrete=True)

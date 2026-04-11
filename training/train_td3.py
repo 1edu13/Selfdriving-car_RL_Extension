@@ -64,6 +64,7 @@ def print_header(device, use_amp, hp):
     print(f"  Total Steps:    {hp['total_timesteps']:,}")
     print(f"  Batch Size:     {hp['batch_size']}")
     print(f"  Buffer Size:    {hp['buffer_capacity']:,}")
+    print(f"  Frame Skip:     {hp['frame_skip']} (action repeated {hp['frame_skip']}x per step)")
     print(f"  Learning Rate:  {hp['learning_rate']}")
     print(f"  Gamma:          {hp['gamma']}  |  Tau: {hp['tau']}")
     print(f"  Expl. Noise:    {hp['exploration_noise']}  |  Policy Noise: {hp['policy_noise']}")
@@ -90,7 +91,7 @@ def train_td3():
 
     learning_rate = 3e-4
     buffer_capacity = 200_000
-    batch_size = 128
+    batch_size = 256
     gamma = 0.99
     tau = 0.005
     start_training_step = 25_000
@@ -124,6 +125,7 @@ def train_td3():
         'policy_noise': policy_noise, 'policy_delay': policy_delay,
         'start_training_step': start_training_step,
         'save_freq': save_freq, 'resume': resume_from_checkpoint,
+        'frame_skip': 2,
     })
 
     envs = gym.vector.SyncVectorEnv(
