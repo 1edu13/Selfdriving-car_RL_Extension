@@ -12,7 +12,7 @@ Total: 8M timesteps
 Optimized for: NVIDIA RTX 3050 (4GB VRAM) | AMD Ryzen 7 4800H | 32GB RAM
 
 Usage:
-    python run_all_training.py
+    python run_all_training.pyf
 """
 
 import subprocess

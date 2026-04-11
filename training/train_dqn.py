@@ -81,7 +81,7 @@ def train_dqn():
     seed = 42
 
     # Training length & checkpointing
-    total_timesteps = 2_000_000       # 2M steps -- sufficient for DQN on CarRacing with discrete actions
+    total_timesteps = 1_000_000       # 2M steps -- sufficient for DQN on CarRacing with discrete actions
     save_freq = 100_000               # Save checkpoint every 100K steps
     log_freq = 10_000                 # Print training metrics every 10K steps
     resume_from_checkpoint = False    # Set to True to resume from the latest checkpoint
