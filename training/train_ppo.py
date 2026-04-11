@@ -62,7 +62,7 @@ def train_ppo():
     env_id = "CarRacing-v2"
     seed = 42
 
-    total_timesteps = 3_000_000
+    total_timesteps = 1_500_000       # PPO is on-policy: needs more env steps (4 envs × 10 epochs help)
 
     learning_rate = 3e-4
     num_envs = 4

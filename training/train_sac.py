@@ -94,7 +94,7 @@ def train_sac():
     env_id = "CarRacing-v2"
     seed = 42
 
-    total_timesteps = 1_500_000
+    total_timesteps = 600_000
     save_freq = 100_000
     log_freq = 10_000
     resume_from_checkpoint = False
