@@ -10,14 +10,20 @@ It addresses DDPG's overestimation bias through three key innovations:
 Optimized for: NVIDIA RTX 3050 (4GB VRAM) | AMD Ryzen 7 4800H | 32GB RAM
 """
 
+import sys
+import os
+
+# Ensure project root is in path when running this script directly
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+from torch.cuda.amp import GradScaler, autocast
 import numpy as np
 import gymnasium as gym
 import random
-import os
 import copy
 from collections import deque
 
@@ -89,7 +95,7 @@ def train_td3():
     device = get_device()
     device_type = device.type
     use_amp = (device_type == "cuda")
-    print(f"🖥️  Using device: {device} | AMP enabled: {use_amp}")
+    print(f"[*] Using device: {device} | AMP enabled: {use_amp}")
 
     if device_type == "cuda":
         torch.backends.cudnn.benchmark = True
@@ -112,7 +118,7 @@ def train_td3():
             start_step = latest_step
             actor.load_state_dict(torch.load(f"models/{run_name}/td3_actor_step_{latest_step}.pth", map_location=device))
             critic.load_state_dict(torch.load(f"models/{run_name}/td3_critic_step_{latest_step}.pth", map_location=device))
-            print(f"\n✅ Checkpoint TD3 found! Resuming training from step {latest_step}...\n")
+            print(f"\n[OK] Checkpoint TD3 found! Resuming training from step {latest_step}...\n")
 
     # Create target networks as exact copies (for Polyak-averaged Bellman updates)
     actor_target = copy.deepcopy(actor)
@@ -122,7 +128,7 @@ def train_td3():
     critic_optimizer = optim.Adam(critic.parameters(), lr=learning_rate)
 
     # AMP GradScaler for mixed-precision training
-    scaler = torch.amp.GradScaler(enabled=use_amp)
+    scaler = GradScaler(enabled=use_amp)
 
     buffer = ReplayBuffer(buffer_capacity)
 
@@ -140,7 +146,7 @@ def train_td3():
         if global_step < start_training_step:
             action_np = envs.action_space.sample()
         else:
-            with torch.no_grad(), torch.amp.autocast(device_type=device_type, enabled=use_amp):
+            with torch.no_grad(), autocast(enabled=use_amp):
                 obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
                 action_tensor = actor(obs_tensor)
 
@@ -178,7 +184,7 @@ def train_td3():
             b_dones = torch.as_tensor(b_dones, device=device).unsqueeze(1)
 
             # --- Update Critic (Every Step) ---
-            with torch.no_grad(), torch.amp.autocast(device_type=device_type, enabled=use_amp):
+            with torch.no_grad(), autocast(enabled=use_amp):
                 # Target Policy Smoothing: add clipped noise to target actor's actions
                 next_action = actor_target(b_next_obs)
                 noise = torch.normal(0, policy_noise, size=next_action.shape, device=device)
@@ -198,7 +204,7 @@ def train_td3():
                 target_q = b_rewards + gamma * target_q * (1 - b_dones)
 
             # Compute critic loss with AMP
-            with torch.amp.autocast(device_type=device_type, enabled=use_amp):
+            with autocast(enabled=use_amp):
                 current_q1, current_q2 = critic(b_obs, b_actions)
                 critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
 
@@ -212,7 +218,7 @@ def train_td3():
 
             # --- Delayed Actor Update (every `policy_delay` steps) ---
             if global_step % policy_delay == 0:
-                with torch.amp.autocast(device_type=device_type, enabled=use_amp):
+                with autocast(enabled=use_amp):
                     # Actor loss: maximize Q-value → minimize -Q(s, π(s))
                     actor_loss = -critic.q1(b_obs, actor(b_obs)).mean()
 
@@ -233,14 +239,14 @@ def train_td3():
             os.makedirs(f"models/{run_name}", exist_ok=True)
             torch.save(actor.state_dict(), f"models/{run_name}/td3_actor_step_{global_step}.pth")
             torch.save(critic.state_dict(), f"models/{run_name}/td3_critic_step_{global_step}.pth")
-            print(f"💾 Checkpoint TD3 saved at step {global_step:,}")
+            print(f"[SAVE] Checkpoint TD3 saved at step {global_step:,}")
 
     # Save final model
     os.makedirs(f"models/{run_name}", exist_ok=True)
     torch.save(actor.state_dict(), f"models/{run_name}/td3_actor_final.pth")
     torch.save(critic.state_dict(), f"models/{run_name}/td3_critic_final.pth")
     envs.close()
-    print(f"\n✅ TD3 Training Complete — {total_timesteps:,} steps | Final model saved.")
+    print(f"\n[OK] TD3 Training Complete -- {total_timesteps:,} steps | Final model saved.")
 
 
 if __name__ == "__main__":

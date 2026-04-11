@@ -10,14 +10,20 @@ It maximizes both expected return AND the policy's entropy (randomness), which l
 Optimized for: NVIDIA RTX 3050 (4GB VRAM) | AMD Ryzen 7 4800H | 32GB RAM
 """
 
+import sys
+import os
+
+# Ensure project root is in path when running this script directly
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+from torch.cuda.amp import GradScaler, autocast
 import numpy as np
 import gymnasium as gym
 import random
-import os
 import copy
 from collections import deque
 
@@ -95,7 +101,7 @@ def train_sac():
     device = get_device()
     device_type = device.type
     use_amp = (device_type == "cuda")
-    print(f"🖥️  Using device: {device} | AMP enabled: {use_amp}")
+    print(f"[*] Using device: {device} | AMP enabled: {use_amp}")
 
     if device_type == "cuda":
         torch.backends.cudnn.benchmark = True
@@ -118,7 +124,7 @@ def train_sac():
             start_step = latest_step
             actor.load_state_dict(torch.load(f"models/{run_name}/sac_actor_step_{latest_step}.pth", map_location=device))
             critic.load_state_dict(torch.load(f"models/{run_name}/sac_critic_step_{latest_step}.pth", map_location=device))
-            print(f"\n✅ Checkpoint SAC found! Resuming training from step {latest_step}...\n")
+            print(f"\n[OK] Checkpoint SAC found! Resuming training from step {latest_step}...\n")
 
     # Target Critic for Bellman updates (SAC doesn't use a Target Actor)
     critic_target = copy.deepcopy(critic)
@@ -133,7 +139,7 @@ def train_sac():
     alpha_optimizer = optim.Adam([log_alpha], lr=learning_rate)
 
     # AMP GradScaler for mixed-precision training
-    scaler = torch.amp.GradScaler(enabled=use_amp)
+    scaler = GradScaler(enabled=use_amp)
 
     buffer = ReplayBuffer(buffer_capacity)
 
@@ -151,7 +157,7 @@ def train_sac():
         if global_step < start_training_step:
             action_np_normalized = envs.action_space.sample()
         else:
-            with torch.no_grad(), torch.amp.autocast(device_type=device_type, enabled=use_amp):
+            with torch.no_grad(), autocast(enabled=use_amp):
                 obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
                 action_tensor, _ = actor.get_action(obs_tensor)
                 action_np_normalized = action_tensor.cpu().numpy()[0]
@@ -189,7 +195,7 @@ def train_sac():
             alpha = log_alpha.exp().detach()
 
             # --- Update Critic (Q-Networks) ---
-            with torch.no_grad(), torch.amp.autocast(device_type=device_type, enabled=use_amp):
+            with torch.no_grad(), autocast(enabled=use_amp):
                 # Sample NEXT actions from current policy
                 next_action, next_log_prob = actor.get_action(b_next_obs)
 
@@ -200,7 +206,7 @@ def train_sac():
                 # Soft Q-Target: r + γ * (Q_target - α * log_π)
                 target_q = b_rewards + gamma * target_q * (1 - b_dones)
 
-            with torch.amp.autocast(device_type=device_type, enabled=use_amp):
+            with autocast(enabled=use_amp):
                 current_q1, current_q2 = critic(b_obs, b_actions)
                 critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
 
@@ -212,7 +218,7 @@ def train_sac():
             scaler.update()
 
             # --- Update Actor (Policy) ---
-            with torch.amp.autocast(device_type=device_type, enabled=use_amp):
+            with autocast(enabled=use_amp):
                 curr_action, curr_log_prob = actor.get_action(b_obs)
                 curr_q1, curr_q2 = critic(b_obs, curr_action)
                 curr_q = torch.min(curr_q1, curr_q2)
@@ -243,14 +249,14 @@ def train_sac():
             os.makedirs(f"models/{run_name}", exist_ok=True)
             torch.save(actor.state_dict(), f"models/{run_name}/sac_actor_step_{global_step}.pth")
             torch.save(critic.state_dict(), f"models/{run_name}/sac_critic_step_{global_step}.pth")
-            print(f"💾 Checkpoint SAC saved at step {global_step:,}")
+            print(f"[SAVE] Checkpoint SAC saved at step {global_step:,}")
 
     # Save final model
     os.makedirs(f"models/{run_name}", exist_ok=True)
     torch.save(actor.state_dict(), f"models/{run_name}/sac_actor_final.pth")
     torch.save(critic.state_dict(), f"models/{run_name}/sac_critic_final.pth")
     envs.close()
-    print(f"\n✅ SAC Training Complete — {total_timesteps:,} steps | Final model saved.")
+    print(f"\n[OK] SAC Training Complete -- {total_timesteps:,} steps | Final model saved.")
 
 
 if __name__ == "__main__":

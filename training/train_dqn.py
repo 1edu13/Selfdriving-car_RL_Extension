@@ -8,13 +8,19 @@ state-action pair. The agent then always picks the action with the highest Q-val
 Optimized for: NVIDIA RTX 3050 (4GB VRAM) | AMD Ryzen 7 4800H | 32GB RAM
 """
 
+import sys
+import os
+
+# Ensure project root is in path when running this script directly
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.cuda.amp import GradScaler, autocast
 import numpy as np
 import gymnasium as gym
 import random
-import os
 from collections import deque
 
 from agents.dqn_agent import DQNAgent
@@ -77,7 +83,7 @@ def train_dqn():
     device = get_device()
     device_type = device.type  # "cuda" or "cpu" — used for AMP autocast
     use_amp = (device_type == "cuda")
-    print(f"🖥️  Using device: {device} | AMP enabled: {use_amp}")
+    print(f"[*] Using device: {device} | AMP enabled: {use_amp}")
 
     # Enable cuDNN benchmark for fixed-size inputs (96x96) — finds fastest convolution algorithm
     if device_type == "cuda":
@@ -100,7 +106,7 @@ def train_dqn():
             latest_step = max([int(f.split("_step_")[1].split(".pth")[0]) for f in chkp_files])
             start_step = latest_step
             policy_net.load_state_dict(torch.load(f"models/{run_name}/dqn_step_{latest_step}.pth", map_location=device))
-            print(f"\n✅ Checkpoint DQN found! Resuming training from step {latest_step}...\n")
+            print(f"\n[OK] Checkpoint DQN found! Resuming training from step {latest_step}...\n")
 
     # Synchronize target network with policy network
     target_net.load_state_dict(policy_net.state_dict())
@@ -111,7 +117,7 @@ def train_dqn():
 
     # AMP GradScaler — scales gradients to prevent underflow in FP16
     # When enabled=False (CPU), all scaler methods become transparent no-ops
-    scaler = torch.amp.GradScaler(enabled=use_amp)
+    scaler = GradScaler(enabled=use_amp)
 
     buffer = ReplayBuffer(buffer_capacity)
 
@@ -130,7 +136,7 @@ def train_dqn():
 
         # 2. Select Action using epsilon-greedy strategy
         obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
-        with torch.no_grad(), torch.amp.autocast(device_type=device_type, enabled=use_amp):
+        with torch.no_grad(), autocast(enabled=use_amp):
             action = policy_net.get_action(obs_tensor, epsilon, device)
         action_np = action.cpu().numpy()
 
@@ -160,7 +166,7 @@ def train_dqn():
             b_dones = torch.as_tensor(b_dones, device=device)
 
             # Forward pass with AMP autocast (FP16 on GPU for ~2x speedup)
-            with torch.amp.autocast(device_type=device_type, enabled=use_amp):
+            with autocast(enabled=use_amp):
                 # Compute Q(s_t, a) — the Q-value for the action we actually took
                 q_values = policy_net(b_obs)
                 state_action_values = q_values.gather(1, b_actions).squeeze(1)
@@ -192,13 +198,13 @@ def train_dqn():
         if global_step > 0 and global_step % save_freq == 0:
             os.makedirs(f"models/{run_name}", exist_ok=True)
             torch.save(policy_net.state_dict(), f"models/{run_name}/dqn_step_{global_step}.pth")
-            print(f"💾 Checkpoint DQN saved at step {global_step:,}")
+            print(f"[SAVE] Checkpoint DQN saved at step {global_step:,}")
 
     # Save final model
     os.makedirs(f"models/{run_name}", exist_ok=True)
     torch.save(policy_net.state_dict(), f"models/{run_name}/dqn_final.pth")
     envs.close()
-    print(f"\n✅ DQN Training Complete — {total_timesteps:,} steps | Final model saved.")
+    print(f"\n[OK] DQN Training Complete -- {total_timesteps:,} steps | Final model saved.")
 
 
 if __name__ == "__main__":

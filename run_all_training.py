@@ -1,12 +1,12 @@
 """
-🏎️  CARRACING-V2 — FULL TRAINING PIPELINE
-==========================================
+CARRACING-V2 -- FULL TRAINING PIPELINE
+=======================================
 
 Master orchestration script that trains all 4 RL agents sequentially
 with a single command. Each model is run as an independent subprocess
 to ensure complete GPU memory cleanup between training sessions.
 
-Training Order: DQN (2M) → TD3 (1.5M) → SAC (1.5M) → PPO (3M)
+Training Order: DQN (2M) -> TD3 (1.5M) -> SAC (1.5M) -> PPO (3M)
 Total: 8M timesteps
 
 Optimized for: NVIDIA RTX 3050 (4GB VRAM) | AMD Ryzen 7 4800H | 32GB RAM
@@ -22,7 +22,7 @@ import os
 from datetime import datetime, timedelta
 
 # =====================================================================
-# CONFIGURATION — Comment out any model to skip it
+# CONFIGURATION -- Comment out any model to skip it
 # =====================================================================
 MODELS_TO_TRAIN = [
     {
@@ -100,25 +100,25 @@ def print_header(hw_info):
     )
 
     print()
-    print("╔" + "═" * 62 + "╗")
-    print("║" + "  🏎️  CARRACING-V2 — FULL TRAINING PIPELINE  🏎️".center(62) + "║")
-    print("╠" + "═" * 62 + "╣")
-    print("║" + f"  GPU:   {hw_info['gpu_name']}".ljust(62) + "║")
-    print("║" + f"  VRAM:  {hw_info['gpu_vram']}  |  CUDA: {hw_info['cuda_version']}  |  PyTorch: {hw_info['torch']}".ljust(62) + "║")
-    print("║" + f"  Total: {total_steps:,} timesteps across {len(MODELS_TO_TRAIN)} models".ljust(62) + "║")
-    print("╠" + "═" * 62 + "╣")
+    print("=" * 64)
+    print("   CARRACING-V2 -- FULL TRAINING PIPELINE".center(64))
+    print("=" * 64)
+    print(f"  GPU:   {hw_info['gpu_name']}")
+    print(f"  VRAM:  {hw_info['gpu_vram']}  |  CUDA: {hw_info['cuda_version']}  |  PyTorch: {hw_info['torch']}")
+    print(f"  Total: {total_steps:,} timesteps across {len(MODELS_TO_TRAIN)} models")
+    print("-" * 64)
 
     for i, model in enumerate(MODELS_TO_TRAIN, 1):
-        line = f"  [{i}/{len(MODELS_TO_TRAIN)}] {model['name']:4s} — {model['timesteps']:>11s} steps  ({model['description']})"
+        line = f"  [{i}/{len(MODELS_TO_TRAIN)}] {model['name']:4s} -- {model['timesteps']:>11s} steps  ({model['description']})"
         # Truncate if too long
-        if len(line) > 62:
-            line = line[:59] + "..."
-        print("║" + line.ljust(62) + "║")
+        if len(line) > 64:
+            line = line[:61] + "..."
+        print(line)
 
-    print("╠" + "═" * 62 + "╣")
+    print("-" * 64)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print("║" + f"  Started at: {timestamp}".ljust(62) + "║")
-    print("╚" + "═" * 62 + "╝")
+    print(f"  Started at: {timestamp}")
+    print("=" * 64)
     print()
 
 
@@ -132,12 +132,12 @@ def train_model(index, total, model_config, project_root):
     script_path = os.path.join(project_root, script)
 
     if not os.path.exists(script_path):
-        print(f"  ❌ Script not found: {script_path}")
+        print(f"  [ERROR] Script not found: {script_path}")
         return {"name": name, "success": False, "duration": 0, "error": "Script not found"}
 
-    separator = "─" * 62
+    separator = "-" * 64
     print(separator)
-    print(f"  🚀 [{index}/{total}] Starting {name} Training...")
+    print(f"  [START] [{index}/{total}] Starting {name} Training...")
     print(f"     Script: {script}")
     print(f"     Steps:  {model_config['timesteps']}")
     print(separator)
@@ -153,25 +153,25 @@ def train_model(index, total, model_config, project_root):
             # Stream output directly to console in real-time
             stdout=None,  # Inherit parent stdout (prints to console)
             stderr=subprocess.STDOUT,
-            timeout=None,  # No timeout — training can take hours
+            timeout=None,  # No timeout -- training can take hours
         )
 
         elapsed = time.time() - start_time
 
         if result.returncode == 0:
-            print(f"\n  ✅ {name} completed successfully in {format_duration(elapsed)}")
+            print(f"\n  [OK] {name} completed successfully in {format_duration(elapsed)}")
             return {"name": name, "success": True, "duration": elapsed, "error": None}
         else:
-            print(f"\n  ❌ {name} failed with return code {result.returncode}")
+            print(f"\n  [FAIL] {name} failed with return code {result.returncode}")
             return {"name": name, "success": False, "duration": elapsed, "error": f"Return code: {result.returncode}"}
 
     except KeyboardInterrupt:
         elapsed = time.time() - start_time
-        print(f"\n  ⚠️  {name} interrupted by user after {format_duration(elapsed)}")
+        print(f"\n  [WARN] {name} interrupted by user after {format_duration(elapsed)}")
         raise  # Re-raise to stop the entire pipeline
     except Exception as e:
         elapsed = time.time() - start_time
-        print(f"\n  ❌ {name} crashed: {str(e)}")
+        print(f"\n  [FAIL] {name} crashed: {str(e)}")
         return {"name": name, "success": False, "duration": elapsed, "error": str(e)}
 
 
@@ -180,35 +180,35 @@ def print_summary(results, total_start_time):
     total_elapsed = time.time() - total_start_time
 
     print()
-    print("╔" + "═" * 62 + "╗")
-    print("║" + "  📊  TRAINING PIPELINE — FINAL SUMMARY".ljust(62) + "║")
-    print("╠" + "═" * 62 + "╣")
+    print("=" * 64)
+    print("   TRAINING PIPELINE -- FINAL SUMMARY".center(64))
+    print("=" * 64)
 
     for r in results:
-        status = "✅" if r["success"] else "❌"
+        status = "[OK]  " if r["success"] else "[FAIL]"
         duration_str = format_duration(r["duration"]) if r["duration"] > 0 else "N/A"
-        line = f"  {status} {r['name']:4s} — {duration_str}"
+        line = f"  {status} {r['name']:4s} -- {duration_str}"
         if r["error"]:
             line += f"  (Error: {r['error'][:30]})"
-        print("║" + line.ljust(62) + "║")
+        print(line)
 
-    print("╠" + "═" * 62 + "╣")
+    print("-" * 64)
 
     successful = sum(1 for r in results if r["success"])
     failed = sum(1 for r in results if not r["success"])
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    print("║" + f"  Total time:  {format_duration(total_elapsed)}".ljust(62) + "║")
-    print("║" + f"  Successful:  {successful}/{len(results)}".ljust(62) + "║")
+    print(f"  Total time:  {format_duration(total_elapsed)}")
+    print(f"  Successful:  {successful}/{len(results)}")
     if failed > 0:
-        print("║" + f"  Failed:      {failed}/{len(results)}".ljust(62) + "║")
-    print("║" + f"  Finished at: {timestamp}".ljust(62) + "║")
-    print("╚" + "═" * 62 + "╝")
+        print(f"  Failed:      {failed}/{len(results)}")
+    print(f"  Finished at: {timestamp}")
+    print("=" * 64)
 
     if successful == len(results):
-        print("\n  🎉 All models trained successfully! Check models/ for checkpoints.")
+        print("\n  All models trained successfully! Check models/ for checkpoints.")
     else:
-        print(f"\n  ⚠️  {failed} model(s) failed. Check the output above for details.")
+        print(f"\n  WARNING: {failed} model(s) failed. Check the output above for details.")
     print()
 
 
@@ -222,7 +222,7 @@ def main():
 
     # Safety check
     if not hw_info["cuda_available"]:
-        print("\n⚠️  WARNING: No CUDA GPU detected! Training will run on CPU (much slower).")
+        print("\n[WARNING] No CUDA GPU detected! Training will run on CPU (much slower).")
         print("   Make sure you have the CUDA version of PyTorch installed:")
         print("   pip install torch --index-url https://download.pytorch.org/whl/cu121")
         response = input("\n   Continue on CPU? [y/N]: ").strip().lower()
@@ -249,11 +249,11 @@ def main():
 
             # Brief pause between models to let GPU cool down
             if i < len(MODELS_TO_TRAIN):
-                print("\n  ⏳ Pausing 10 seconds for GPU memory cleanup...\n")
+                print("\n  [WAIT] Pausing 10 seconds for GPU memory cleanup...\n")
                 time.sleep(10)
 
     except KeyboardInterrupt:
-        print("\n\n  🛑 Pipeline interrupted by user (Ctrl+C).")
+        print("\n\n  [STOP] Pipeline interrupted by user (Ctrl+C).")
         print("     Partial results will be shown below.")
 
     # Print final summary

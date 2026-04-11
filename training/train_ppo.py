@@ -13,12 +13,18 @@ On-policy methods require ~2-3x more samples than off-policy, hence 3M total tim
 Optimized for: NVIDIA RTX 3050 (4GB VRAM) | AMD Ryzen 7 4800H | 32GB RAM
 """
 
+import sys
+import os
+
+# Ensure project root is in path when running this script directly
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.cuda.amp import GradScaler, autocast
 import numpy as np
 import gymnasium as gym
-import os
 
 from agents.ppo_agent import PPOAgent
 from core.utils import make_env, get_device
@@ -64,7 +70,7 @@ def train_ppo():
     device = get_device()
     device_type = device.type
     use_amp = (device_type == "cuda")
-    print(f"🖥️  Using device: {device} | AMP enabled: {use_amp}")
+    print(f"[*] Using device: {device} | AMP enabled: {use_amp}")
 
     if device_type == "cuda":
         torch.backends.cudnn.benchmark = True
@@ -82,7 +88,7 @@ def train_ppo():
     optimizer = optim.Adam(agent.parameters(), lr=learning_rate, eps=1e-5)
 
     # AMP GradScaler for mixed-precision
-    scaler = torch.amp.GradScaler(enabled=use_amp)
+    scaler = GradScaler(enabled=use_amp)
 
     # --- Rollout Storage Buffers ---
     obs = torch.zeros((num_steps, num_envs) + envs.single_observation_space.shape).to(device)
@@ -98,7 +104,7 @@ def train_ppo():
     next_done = torch.zeros(num_envs).to(device)
     num_updates = total_timesteps // batch_size
 
-    print(f"🚀 Starting PPO Training... Total Updates: {num_updates} | Batch: {batch_size} | Minibatch: {minibatch_size}")
+    print(f"[START] Starting PPO Training... Total Updates: {num_updates} | Batch: {batch_size} | Minibatch: {minibatch_size}")
 
     for update in range(1, num_updates + 1):
         # Learning rate annealing
@@ -113,7 +119,7 @@ def train_ppo():
             obs[step] = next_obs
             dones[step] = next_done
 
-            with torch.no_grad(), torch.amp.autocast(device_type=device_type, enabled=use_amp):
+            with torch.no_grad(), autocast(enabled=use_amp):
                 action, logprob, _, value = agent.get_action_and_value(next_obs)
                 values[step] = value.flatten()
 
@@ -131,7 +137,7 @@ def train_ppo():
                         print(f"Step: {global_step:>8,} | Ep Reward: {info['episode']['r']:.2f}")
 
         # ===== Phase 2: GAE (Generalized Advantage Estimation) =====
-        with torch.no_grad(), torch.amp.autocast(device_type=device_type, enabled=use_amp):
+        with torch.no_grad(), autocast(enabled=use_amp):
             next_value = agent.get_value(next_obs).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
@@ -160,7 +166,7 @@ def train_ppo():
                 end = start + minibatch_size
                 mb_inds = b_inds[start:end]
 
-                with torch.amp.autocast(device_type=device_type, enabled=use_amp):
+                with autocast(enabled=use_amp):
                     _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
                     logratio = newlogprob - b_logprobs[mb_inds]
                     ratio = logratio.exp()
@@ -197,12 +203,12 @@ def train_ppo():
         if update % save_freq_updates == 0:
             save_path = f"models/{run_name}/ppo_step_{global_step}.pth"
             torch.save(agent.state_dict(), save_path)
-            print(f"💾 Checkpoint PPO saved at step {global_step:,}")
+            print(f"[SAVE] Checkpoint PPO saved at step {global_step:,}")
 
     # Save final model
     torch.save(agent.state_dict(), f"models/{run_name}/ppo_final.pth")
     envs.close()
-    print(f"\n✅ PPO Training Complete — {total_timesteps:,} steps | Final model saved.")
+    print(f"\n[OK] PPO Training Complete -- {total_timesteps:,} steps | Final model saved.")
 
 
 if __name__ == "__main__":
