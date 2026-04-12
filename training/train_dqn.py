@@ -74,7 +74,7 @@ def print_header(device, use_amp, hparams):
 
 def train_dqn():
     # =====================================================================
-    # HYPERPARAMETERS -- Optimized for RTX 3050 (4GB VRAM) + 32GB RAM
+    # HYPERPARAMETERS -- Optimized for RTX 3050 (4GB VRAM) + 32GB RAM.
     # =====================================================================
     run_name = "dqn_baseline"
     env_id = "CarRacing-v2"
