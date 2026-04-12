@@ -96,7 +96,7 @@ def train_td3():
     gamma = 0.99
     tau = 0.005
     start_training_step = 25_000
-    gradient_steps = 4                # GPU updates per env step
+    gradient_steps = 1                # GPU updates per env step (1:1 ratio with single env)
 
     exploration_noise = 0.1
     policy_noise = 0.2
@@ -151,7 +151,8 @@ def train_td3():
     critic_target = copy.deepcopy(critic)
     actor_optimizer = optim.Adam(actor.parameters(), lr=learning_rate)
     critic_optimizer = optim.Adam(critic.parameters(), lr=learning_rate)
-    scaler = GradScaler(enabled=use_amp)
+    scaler_critic = GradScaler(enabled=use_amp)
+    scaler_actor = GradScaler(enabled=use_amp)
 
     buffer = ReplayBuffer(buffer_capacity)
 
@@ -165,8 +166,8 @@ def train_td3():
     current_ep_reward = 0
     episode_count = 0
 
-    recent_critic_losses = []
-    recent_actor_losses = []
+    recent_critic_losses = deque(maxlen=1000)
+    recent_actor_losses = deque(maxlen=1000)
     train_start_time = time.time()
 
     print("  Step         | Critic L | Actor L  | Buffer  | Ep Reward | Avg(10)  | Progress")
@@ -187,7 +188,7 @@ def train_td3():
 
         # 2. Environment Step
         next_obs, rewards, terminations, truncations, infos = envs.step(action_np)
-        next_obs = np.array(next_obs)
+        next_obs = np.asarray(next_obs)
         dones = np.logical_or(terminations, truncations)
 
         current_ep_reward += rewards[0]
@@ -232,11 +233,11 @@ def train_td3():
                     critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
 
                 critic_optimizer.zero_grad()
-                scaler.scale(critic_loss).backward()
-                scaler.unscale_(critic_optimizer)
+                scaler_critic.scale(critic_loss).backward()
+                scaler_critic.unscale_(critic_optimizer)
                 nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
-                scaler.step(critic_optimizer)
-                scaler.update()
+                scaler_critic.step(critic_optimizer)
+                scaler_critic.update()
 
                 recent_critic_losses.append(critic_loss.item())
 
@@ -246,9 +247,9 @@ def train_td3():
                         actor_loss = -critic.q1(b_obs, actor(b_obs)).mean()
 
                     actor_optimizer.zero_grad()
-                    scaler.scale(actor_loss).backward()
-                    scaler.step(actor_optimizer)
-                    scaler.update()
+                    scaler_actor.scale(actor_loss).backward()
+                    scaler_actor.step(actor_optimizer)
+                    scaler_actor.update()
 
                     recent_actor_losses.append(actor_loss.item())
 
@@ -263,8 +264,8 @@ def train_td3():
             elapsed = time.time() - train_start_time
             sps = (global_step - start_step) / max(elapsed, 1)
             ms_per_step = 1000 / max(sps, 1)
-            avg_cl = np.mean(recent_critic_losses[-500:])
-            avg_al = np.mean(recent_actor_losses[-500:]) if recent_actor_losses else 0
+            avg_cl = np.mean(recent_critic_losses)
+            avg_al = np.mean(recent_actor_losses) if recent_actor_losses else 0
             avg_rew = np.mean(episode_rewards[-10:]) if episode_rewards else 0
             pct = 100 * global_step / total_timesteps
             print(f"  {global_step:>13,} | {avg_cl:>8.4f} | {avg_al:>8.4f} | {len(buffer):>7,} | "

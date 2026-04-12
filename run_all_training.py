@@ -28,7 +28,7 @@ MODELS_TO_TRAIN = [
     {
         "name": "DQN",
         "script": "training/train_dqn.py",
-        "timesteps": "2,000,000",
+        "timesteps": "1,000,000",
         "description": "Deep Q-Network (discrete actions)",
     },
     {

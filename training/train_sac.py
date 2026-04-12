@@ -106,7 +106,7 @@ def train_sac():
     tau = 0.005
     start_training_step = 25_000
     target_entropy = -3.0
-    gradient_steps = 4                # GPU updates per env step
+    gradient_steps = 1                # GPU updates per env step (1:1 ratio with single env)
 
     # =====================================================================
     # SETUP
@@ -155,7 +155,8 @@ def train_sac():
     log_alpha = torch.zeros(1, requires_grad=True, device=device)
     alpha_optimizer = optim.Adam([log_alpha], lr=learning_rate)
 
-    scaler = GradScaler(enabled=use_amp)
+    scaler_critic = GradScaler(enabled=use_amp)
+    scaler_actor = GradScaler(enabled=use_amp)
     buffer = ReplayBuffer(buffer_capacity)
 
     # =====================================================================
@@ -168,10 +169,10 @@ def train_sac():
     current_ep_reward = 0
     episode_count = 0
 
-    recent_critic_losses = []
-    recent_actor_losses = []
-    recent_alphas = []
-    recent_entropies = []
+    recent_critic_losses = deque(maxlen=1000)
+    recent_actor_losses = deque(maxlen=1000)
+    recent_alphas = deque(maxlen=1000)
+    recent_entropies = deque(maxlen=1000)
     train_start_time = time.time()
 
     print("  Step         | Crit. L  | Act. L   | Alpha  | Entropy | Buffer  | Ep Rew  | Avg(10)")
@@ -191,7 +192,7 @@ def train_sac():
 
         # 2. Environment Step
         next_obs, rewards, terminations, truncations, infos = envs.step([action_env])
-        next_obs = np.array(next_obs)
+        next_obs = np.asarray(next_obs)
         dones = np.logical_or(terminations, truncations)
 
         current_ep_reward += rewards[0]
@@ -233,11 +234,11 @@ def train_sac():
                     critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
 
                 critic_optimizer.zero_grad()
-                scaler.scale(critic_loss).backward()
-                scaler.unscale_(critic_optimizer)
+                scaler_critic.scale(critic_loss).backward()
+                scaler_critic.unscale_(critic_optimizer)
                 nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
-                scaler.step(critic_optimizer)
-                scaler.update()
+                scaler_critic.step(critic_optimizer)
+                scaler_critic.update()
 
                 # --- Actor Update ---
                 with autocast(enabled=use_amp):
@@ -247,9 +248,9 @@ def train_sac():
                     actor_loss = (alpha * curr_log_prob - curr_q).mean()
 
                 actor_optimizer.zero_grad()
-                scaler.scale(actor_loss).backward()
-                scaler.step(actor_optimizer)
-                scaler.update()
+                scaler_actor.scale(actor_loss).backward()
+                scaler_actor.step(actor_optimizer)
+                scaler_actor.update()
 
                 # --- Alpha Update ---
                 alpha_loss = -(log_alpha * (curr_log_prob + target_entropy).detach()).mean()
@@ -272,10 +273,10 @@ def train_sac():
             elapsed = time.time() - train_start_time
             sps = (global_step - start_step) / max(elapsed, 1)
             ms_per_step = 1000 / max(sps, 1)
-            avg_cl = np.mean(recent_critic_losses[-500:])
-            avg_al = np.mean(recent_actor_losses[-500:])
-            avg_alpha = np.mean(recent_alphas[-500:])
-            avg_ent = np.mean(recent_entropies[-500:])
+            avg_cl = np.mean(recent_critic_losses)
+            avg_al = np.mean(recent_actor_losses)
+            avg_alpha = np.mean(recent_alphas)
+            avg_ent = np.mean(recent_entropies)
             avg_rew = np.mean(episode_rewards[-10:]) if episode_rewards else 0
             pct = 100 * global_step / total_timesteps
             print(f"  {global_step:>13,} | {avg_cl:>8.4f} | {avg_al:>8.4f} | {avg_alpha:>6.3f} | "

@@ -93,7 +93,7 @@ def train_dqn():
     gamma = 0.99                      # Discount factor
     target_update_freq = 5000         # Hard update target network every 5K steps
     start_training_step = 50_000      # Random warmup phase to fill buffer with diverse data
-    gradient_steps = 4                # GPU updates per env step -- keeps GPU busy while CPU renders
+    gradient_steps = 1                # GPU updates per env step (1:1 ratio with single env)
 
     # Epsilon-Greedy exploration parameters
     epsilon_start = 1.0               # Start fully random
@@ -165,8 +165,8 @@ def train_dqn():
     episode_count = 0
 
     # Metric tracking for periodic logging
-    recent_losses = []
-    recent_q_values = []
+    recent_losses = deque(maxlen=1000)
+    recent_q_values = deque(maxlen=1000)
     train_start_time = time.time()
     last_log_step = start_step
 
@@ -185,7 +185,7 @@ def train_dqn():
 
         # 3. Environment Step
         next_obs, rewards, terminations, truncations, infos = envs.step(action_np)
-        next_obs = np.array(next_obs)
+        next_obs = np.asarray(next_obs)
         dones = np.logical_or(terminations, truncations)
 
         current_ep_reward += rewards[0]
@@ -244,8 +244,8 @@ def train_dqn():
             elapsed = time.time() - train_start_time
             steps_per_sec = (global_step - start_step) / max(elapsed, 1)
             ms_per_step = 1000 / max(steps_per_sec, 1)
-            avg_loss = np.mean(recent_losses[-1000:])
-            avg_q = np.mean(recent_q_values[-1000:])
+            avg_loss = np.mean(recent_losses)
+            avg_q = np.mean(recent_q_values)
             avg_rew = np.mean(episode_rewards[-10:]) if episode_rewards else 0
             pct = 100 * global_step / total_timesteps
 
