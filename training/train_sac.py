@@ -30,37 +30,19 @@ from collections import deque
 
 from agents.sac_agent import Actor, Critic
 from core.utils import make_env, get_device
+from core.replay_buffer import ReplayBuffer
 
 
-class ReplayBuffer:
+def scale_actions_for_env(normalized_actions):
     """
-    Experience Replay Buffer. Store and sample steps.
-    For SAC, we store the NORMALIZED [-1, 1] actions in the buffer, not the environment-scaled ones.
-    """
-    def __init__(self, capacity):
-        self.buffer = deque(maxlen=capacity)
-
-    def push(self, state, action, reward, next_state, done):
-        self.buffer.append((state, action, reward, next_state, done))
-
-    def sample(self, batch_size):
-        state, action, reward, next_state, done = zip(*random.sample(self.buffer, batch_size))
-        return (np.array(state), np.array(action), np.array(reward, dtype=np.float32),
-                np.array(next_state), np.array(done, dtype=np.float32))
-
-    def __len__(self):
-        return len(self.buffer)
-
-
-def scale_action_for_env(normalized_action):
-    """
-    Converts a standard [-1, 1] action vector (from our Actor) into the specialized
+    Converts standard [-1, 1] action vectors into the specialized
     boundaries required by CarRacing-v2.
+    Works with both single actions (3,) and batched actions (N, 3).
     """
-    env_action = np.copy(normalized_action)
-    env_action[1] = (env_action[1] + 1.0) / 2.0  # Gas mapping
-    env_action[2] = (env_action[2] + 1.0) / 2.0  # Brake mapping
-    return env_action
+    env_actions = np.copy(normalized_actions)
+    env_actions[..., 1] = (env_actions[..., 1] + 1.0) / 2.0  # Gas:   [-1,1] -> [0,1]
+    env_actions[..., 2] = (env_actions[..., 2] + 1.0) / 2.0  # Brake: [-1,1] -> [0,1]
+    return env_actions
 
 
 def print_header(device, use_amp, hp):
@@ -72,6 +54,7 @@ def print_header(device, use_amp, hp):
     print(f"  Device:         {device}")
     print(f"  AMP (FP16):     {'Enabled' if use_amp else 'Disabled'}")
     print(f"  Total Steps:    {hp['total_timesteps']:,}")
+    print(f"  Num Envs:       {hp['num_envs']} (AsyncVectorEnv)")
     print(f"  Batch Size:     {hp['batch_size']}")
     print(f"  Buffer Size:    {hp['buffer_capacity']:,}")
     print(f"  Frame Skip:     {hp['frame_skip']} (action repeated {hp['frame_skip']}x per step)")
@@ -107,6 +90,7 @@ def train_sac():
     start_training_step = 25_000
     target_entropy = -3.0
     gradient_steps = 1                # GPU updates per env step (1:1 ratio with single env)
+    num_envs = 4                      # Parallel envs on separate CPU cores via AsyncVectorEnv
 
     # =====================================================================
     # SETUP
@@ -129,10 +113,12 @@ def train_sac():
         'start_training_step': start_training_step,
         'save_freq': save_freq, 'resume': resume_from_checkpoint,
         'frame_skip': 4, 'gradient_steps': gradient_steps,
+        'num_envs': num_envs,
     })
 
-    envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id, seed, 0, False, run_name, is_discrete=False)]
+    # AsyncVectorEnv runs each env in a separate process for true CPU parallelism
+    envs = gym.vector.AsyncVectorEnv(
+        [make_env(env_id, seed + i, i, False, run_name, is_discrete=False) for i in range(num_envs)]
     )
 
     actor = Actor(action_dim=3).to(device)
@@ -163,10 +149,10 @@ def train_sac():
     # TRAINING LOOP
     # =====================================================================
     obs, _ = envs.reset(seed=seed)
-    obs = np.array(obs)
+    obs = np.asarray(obs)
 
     episode_rewards = []
-    current_ep_reward = 0
+    current_ep_rewards = np.zeros(num_envs)
     episode_count = 0
 
     recent_critic_losses = deque(maxlen=1000)
@@ -178,38 +164,46 @@ def train_sac():
     print("  Step         | Crit. L  | Act. L   | Alpha  | Entropy | Buffer  | Ep Rew  | Avg(10)")
     print("  " + "-" * 90)
 
-    for global_step in range(start_step, total_timesteps):
+    global_step = start_step
+    while global_step < total_timesteps:
         # 1. Select Action
         if global_step < start_training_step:
-            action_np_normalized = envs.action_space.sample()[0]
+            # Random exploration: sample in normalized [-1, 1] range for all envs
+            actions_normalized = np.random.uniform(-1, 1, (num_envs, 3)).astype(np.float32)
         else:
             with torch.no_grad(), autocast(enabled=use_amp):
                 obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
                 action_tensor, _ = actor.get_action(obs_tensor)
-                action_np_normalized = action_tensor.cpu().numpy()[0]
+                actions_normalized = action_tensor.cpu().numpy()  # (num_envs, 3) in [-1, 1]
 
-        action_env = scale_action_for_env(action_np_normalized)
+        # Scale normalized [-1,1] actions to env ranges [steer: -1..1, gas: 0..1, brake: 0..1]
+        actions_env = scale_actions_for_env(actions_normalized)
 
-        # 2. Environment Step
-        next_obs, rewards, terminations, truncations, infos = envs.step([action_env])
+        # 2. Environment Step (parallel across num_envs processes)
+        next_obs, rewards, terminations, truncations, infos = envs.step(actions_env)
         next_obs = np.asarray(next_obs)
         dones = np.logical_or(terminations, truncations)
 
-        current_ep_reward += rewards[0]
-        if dones[0]:
-            episode_rewards.append(current_ep_reward)
-            episode_count += 1
-            avg_rew = np.mean(episode_rewards[-10:])
-            alpha_val = log_alpha.exp().item()
-            print(f"  {global_step:>13,} | {'':>8s} | {'':>8s} | {alpha_val:>6.3f} | "
-                  f"{'':>7s} | {len(buffer):>7,} | {current_ep_reward:>7.1f} | {avg_rew:>7.1f}")
-            current_ep_reward = 0
+        # Store NORMALIZED actions in buffer (from all envs)
+        for i in range(num_envs):
+            buffer.push(obs[i], actions_normalized[i], rewards[i], next_obs[i], dones[i])
 
-        # Store NORMALIZED action in buffer
-        buffer.push(obs[0], action_np_normalized, rewards[0], next_obs[0], dones[0])
+        # Track episodes for each env independently
+        current_ep_rewards += rewards
+        for i in range(num_envs):
+            if dones[i]:
+                episode_rewards.append(current_ep_rewards[i])
+                episode_count += 1
+                avg_rew = np.mean(episode_rewards[-10:])
+                alpha_val = log_alpha.exp().item()
+                print(f"  {global_step:>13,} | {'':>8s} | {'':>8s} | {alpha_val:>6.3f} | "
+                      f"{'':>7s} | {len(buffer):>7,} | {current_ep_rewards[i]:>7.1f} | {avg_rew:>7.1f}")
+                current_ep_rewards[i] = 0
+
         obs = next_obs
+        global_step += num_envs
 
-        # 3. Learning Phase -- gradient_steps updates per env step
+        # 3. Learning Phase
         if global_step >= start_training_step and len(buffer) >= batch_size:
             for _ in range(gradient_steps):
                 b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
@@ -269,7 +263,7 @@ def train_sac():
                 recent_entropies.append(-curr_log_prob.mean().item())
 
         # 4. Periodic metrics log
-        if global_step > 0 and global_step % log_freq == 0 and recent_critic_losses:
+        if global_step % log_freq < num_envs and recent_critic_losses and global_step > start_step:
             elapsed = time.time() - train_start_time
             sps = (global_step - start_step) / max(elapsed, 1)
             ms_per_step = 1000 / max(sps, 1)
@@ -284,7 +278,7 @@ def train_sac():
                   f"[{pct:.1f}% {sps:,.0f}sps {ms_per_step:.2f}ms/step]")
 
         # 5. Checkpoint
-        if global_step > 0 and global_step % save_freq == 0:
+        if global_step % save_freq < num_envs and global_step > start_step:
             os.makedirs(f"models/{run_name}", exist_ok=True)
             torch.save(actor.state_dict(), f"models/{run_name}/sac_actor_step_{global_step}.pth")
             torch.save(critic.state_dict(), f"models/{run_name}/sac_critic_step_{global_step}.pth")
@@ -308,9 +302,9 @@ def train_sac():
         print(f"  Best Reward:    {max(episode_rewards):.1f}")
         print(f"  Final Avg(10):  {np.mean(episode_rewards[-10:]):.1f}")
     if recent_alphas:
-        print(f"  Final Alpha:    {np.mean(recent_alphas[-100:]):.4f}")
+        print(f"  Final Alpha:    {np.mean(recent_alphas):.4f}")
     if recent_entropies:
-        print(f"  Final Entropy:  {np.mean(recent_entropies[-100:]):.2f}")
+        print(f"  Final Entropy:  {np.mean(recent_entropies):.2f}")
     print(f"  Model Saved:    models/{run_name}/sac_*_final.pth")
     print("=" * 64)
     print()

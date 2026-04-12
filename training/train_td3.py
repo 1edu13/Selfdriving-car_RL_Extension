@@ -30,27 +30,7 @@ from collections import deque
 
 from agents.td3_agent import Actor, Critic
 from core.utils import make_env, get_device
-
-
-class ReplayBuffer:
-    """
-    Experience Replay Buffer for continuous action spaces.
-    Stores transitions (state, action, reward, next_state, done) and samples
-    random batches to break the temporal correlation of data for stable training.
-    """
-    def __init__(self, capacity):
-        self.buffer = deque(maxlen=capacity)
-
-    def push(self, state, action, reward, next_state, done):
-        self.buffer.append((state, action, reward, next_state, done))
-
-    def sample(self, batch_size):
-        state, action, reward, next_state, done = zip(*random.sample(self.buffer, batch_size))
-        return (np.array(state), np.array(action), np.array(reward, dtype=np.float32),
-                np.array(next_state), np.array(done, dtype=np.float32))
-
-    def __len__(self):
-        return len(self.buffer)
+from core.replay_buffer import ReplayBuffer
 
 
 def print_header(device, use_amp, hp):
@@ -62,6 +42,7 @@ def print_header(device, use_amp, hp):
     print(f"  Device:         {device}")
     print(f"  AMP (FP16):     {'Enabled' if use_amp else 'Disabled'}")
     print(f"  Total Steps:    {hp['total_timesteps']:,}")
+    print(f"  Num Envs:       {hp['num_envs']} (AsyncVectorEnv)")
     print(f"  Batch Size:     {hp['batch_size']}")
     print(f"  Buffer Size:    {hp['buffer_capacity']:,}")
     print(f"  Frame Skip:     {hp['frame_skip']} (action repeated {hp['frame_skip']}x per step)")
@@ -97,6 +78,7 @@ def train_td3():
     tau = 0.005
     start_training_step = 25_000
     gradient_steps = 1                # GPU updates per env step (1:1 ratio with single env)
+    num_envs = 4                      # Parallel envs on separate CPU cores via AsyncVectorEnv
 
     exploration_noise = 0.1
     policy_noise = 0.2
@@ -128,10 +110,12 @@ def train_td3():
         'start_training_step': start_training_step,
         'save_freq': save_freq, 'resume': resume_from_checkpoint,
         'frame_skip': 4, 'gradient_steps': gradient_steps,
+        'num_envs': num_envs,
     })
 
-    envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id, seed, 0, False, run_name, is_discrete=False)]
+    # AsyncVectorEnv runs each env in a separate process for true CPU parallelism
+    envs = gym.vector.AsyncVectorEnv(
+        [make_env(env_id, seed + i, i, False, run_name, is_discrete=False) for i in range(num_envs)]
     )
 
     actor = Actor(action_dim=3).to(device)
@@ -160,23 +144,25 @@ def train_td3():
     # TRAINING LOOP
     # =====================================================================
     obs, _ = envs.reset(seed=seed)
-    obs = np.array(obs)
+    obs = np.asarray(obs)
 
     episode_rewards = []
-    current_ep_reward = 0
+    current_ep_rewards = np.zeros(num_envs)
     episode_count = 0
 
     recent_critic_losses = deque(maxlen=1000)
     recent_actor_losses = deque(maxlen=1000)
     train_start_time = time.time()
+    grad_step_counter = 0  # Global counter for policy delay tracking
 
     print("  Step         | Critic L | Actor L  | Buffer  | Ep Reward | Avg(10)  | Progress")
     print("  " + "-" * 82)
 
-    for global_step in range(start_step, total_timesteps):
+    global_step = start_step
+    while global_step < total_timesteps:
         # 1. Select Action
         if global_step < start_training_step:
-            action_np = envs.action_space.sample()
+            action_np = envs.action_space.sample()  # (num_envs, 3) random exploration
         else:
             with torch.no_grad(), autocast(enabled=use_amp):
                 obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
@@ -186,27 +172,32 @@ def train_td3():
                 action_np = action_tensor.cpu().numpy()
                 action_np = np.clip(action_np, action_low, action_high)
 
-        # 2. Environment Step
+        # 2. Environment Step (parallel across num_envs processes)
         next_obs, rewards, terminations, truncations, infos = envs.step(action_np)
         next_obs = np.asarray(next_obs)
         dones = np.logical_or(terminations, truncations)
 
-        current_ep_reward += rewards[0]
-        if dones[0]:
-            episode_rewards.append(current_ep_reward)
-            episode_count += 1
-            avg_rew = np.mean(episode_rewards[-10:])
-            print(f"  {global_step:>13,} | {'':>8s} | {'':>8s} | {len(buffer):>7,} | "
-                  f"{current_ep_reward:>9.1f} | {avg_rew:>8.1f} |")
-            current_ep_reward = 0
+        # 3. Store transitions from ALL envs
+        for i in range(num_envs):
+            buffer.push(obs[i], action_np[i], rewards[i], next_obs[i], dones[i])
 
-        # 3. Store in Buffer
-        buffer.push(obs[0], action_np[0], rewards[0], next_obs[0], dones[0])
+        # Track episodes for each env independently
+        current_ep_rewards += rewards
+        for i in range(num_envs):
+            if dones[i]:
+                episode_rewards.append(current_ep_rewards[i])
+                episode_count += 1
+                avg_rew = np.mean(episode_rewards[-10:])
+                print(f"  {global_step:>13,} | {'':>8s} | {'':>8s} | {len(buffer):>7,} | "
+                      f"{current_ep_rewards[i]:>9.1f} | {avg_rew:>8.1f} |")
+                current_ep_rewards[i] = 0
+
         obs = next_obs
+        global_step += num_envs
 
-        # 4. Network Updates -- gradient_steps updates per env step
+        # 4. Network Updates
         if global_step >= start_training_step and len(buffer) >= batch_size:
-            for grad_step in range(gradient_steps):
+            for _ in range(gradient_steps):
                 b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
 
                 b_obs = torch.as_tensor(b_obs, dtype=torch.float32, device=device)
@@ -240,9 +231,10 @@ def train_td3():
                 scaler_critic.update()
 
                 recent_critic_losses.append(critic_loss.item())
+                grad_step_counter += 1
 
                 # --- Delayed Actor Update (every policy_delay critic updates) ---
-                if grad_step % policy_delay == 0:
+                if grad_step_counter % policy_delay == 0:
                     with autocast(enabled=use_amp):
                         actor_loss = -critic.q1(b_obs, actor(b_obs)).mean()
 
@@ -260,7 +252,7 @@ def train_td3():
                         target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
         # 5. Periodic metrics log
-        if global_step > 0 and global_step % log_freq == 0 and recent_critic_losses:
+        if global_step % log_freq < num_envs and recent_critic_losses and global_step > start_step:
             elapsed = time.time() - train_start_time
             sps = (global_step - start_step) / max(elapsed, 1)
             ms_per_step = 1000 / max(sps, 1)
@@ -272,7 +264,7 @@ def train_td3():
                   f"{'':>9s} | {avg_rew:>8.1f} | {pct:>5.1f}% {sps:,.0f}sps {ms_per_step:.2f}ms/step")
 
         # 6. Save Checkpoint
-        if global_step > 0 and global_step % save_freq == 0:
+        if global_step % save_freq < num_envs and global_step > start_step:
             os.makedirs(f"models/{run_name}", exist_ok=True)
             torch.save(actor.state_dict(), f"models/{run_name}/td3_actor_step_{global_step}.pth")
             torch.save(critic.state_dict(), f"models/{run_name}/td3_critic_step_{global_step}.pth")
@@ -296,7 +288,7 @@ def train_td3():
         print(f"  Best Reward:    {max(episode_rewards):.1f}")
         print(f"  Final Avg(10):  {np.mean(episode_rewards[-10:]):.1f}")
     if recent_critic_losses:
-        print(f"  Final Crit. L:  {np.mean(recent_critic_losses[-100:]):.4f}")
+        print(f"  Final Crit. L:  {np.mean(recent_critic_losses):.4f}")
     print(f"  Model Saved:    models/{run_name}/td3_*_final.pth")
     print("=" * 64)
     print()

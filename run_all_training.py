@@ -34,19 +34,19 @@ MODELS_TO_TRAIN = [
     {
         "name": "TD3",
         "script": "training/train_td3.py",
-        "timesteps": "1,500,000",
+        "timesteps": "600,000",
         "description": "Twin Delayed DDPG (continuous)",
     },
     {
         "name": "SAC",
         "script": "training/train_sac.py",
-        "timesteps": "1,500,000",
+        "timesteps": "600,000",
         "description": "Soft Actor-Critic (max entropy)",
     },
     {
         "name": "PPO",
         "script": "training/train_ppo.py",
-        "timesteps": "3,000,000",
+        "timesteps": "1,500,000",
         "description": "Proximal Policy Optimization (on-policy)",
     },
 ]

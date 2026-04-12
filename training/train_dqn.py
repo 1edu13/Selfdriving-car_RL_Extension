@@ -26,26 +26,7 @@ from collections import deque
 
 from agents.dqn_agent import DQNAgent
 from core.utils import make_env, get_device
-
-
-class ReplayBuffer:
-    """
-    Experience Replay Buffer for off-policy learning.
-    Stores transitions and samples random mini-batches to break temporal correlations.
-    """
-    def __init__(self, capacity):
-        self.buffer = deque(maxlen=capacity)
-
-    def push(self, state, action, reward, next_state, done):
-        self.buffer.append((state, action, reward, next_state, done))
-
-    def sample(self, batch_size):
-        state, action, reward, next_state, done = zip(*random.sample(self.buffer, batch_size))
-        return (np.array(state), np.array(action), np.array(reward, dtype=np.float32),
-                np.array(next_state), np.array(done, dtype=np.float32))
-
-    def __len__(self):
-        return len(self.buffer)
+from core.replay_buffer import ReplayBuffer
 
 
 def print_header(device, use_amp, hparams):
@@ -57,6 +38,7 @@ def print_header(device, use_amp, hparams):
     print(f"  Device:         {device}")
     print(f"  AMP (FP16):     {'Enabled' if use_amp else 'Disabled'}")
     print(f"  Total Steps:    {hparams['total_timesteps']:,}")
+    print(f"  Num Envs:       {hparams['num_envs']} (AsyncVectorEnv)")
     print(f"  Batch Size:     {hparams['batch_size']}")
     print(f"  Buffer Size:    {hparams['buffer_capacity']:,}")
     print(f"  Frame Skip:     {hparams['frame_skip']} (action repeated {hparams['frame_skip']}x per step)")
@@ -74,14 +56,14 @@ def print_header(device, use_amp, hparams):
 
 def train_dqn():
     # =====================================================================
-    # HYPERPARAMETERS -- Optimized for RTX 3050 (4GB VRAM) + 32GB RAM.
+    # HYPERPARAMETERS -- Optimized for RTX 3050 (4GB VRAM) + 32GB RAM
     # =====================================================================
     run_name = "dqn_baseline"
     env_id = "CarRacing-v2"
     seed = 42
 
     # Training length & checkpointing
-    total_timesteps = 1_000_000       # 2M steps -- sufficient for DQN on CarRacing with discrete actions
+    total_timesteps = 1_000_000       # 1M steps -- sufficient for DQN on CarRacing with discrete actions
     save_freq = 100_000               # Save checkpoint every 100K steps
     log_freq = 10_000                 # Print training metrics every 10K steps
     resume_from_checkpoint = False    # Set to True to resume from the latest checkpoint
@@ -94,6 +76,7 @@ def train_dqn():
     target_update_freq = 5000         # Hard update target network every 5K steps
     start_training_step = 50_000      # Random warmup phase to fill buffer with diverse data
     gradient_steps = 1                # GPU updates per env step (1:1 ratio with single env)
+    num_envs = 4                      # Parallel envs on separate CPU cores via AsyncVectorEnv
 
     # Epsilon-Greedy exploration parameters
     epsilon_start = 1.0               # Start fully random
@@ -123,11 +106,13 @@ def train_dqn():
         'start_training_step': start_training_step,
         'save_freq': save_freq, 'resume': resume_from_checkpoint,
         'frame_skip': 4, 'gradient_steps': gradient_steps,
+        'num_envs': num_envs,
     })
 
     # Environment setup -- DQN requires discrete actions (is_discrete=True)
-    envs = gym.vector.SyncVectorEnv(
-        [make_env(env_id, seed, 0, False, run_name, is_discrete=True)]
+    # AsyncVectorEnv runs each env in a separate process for true CPU parallelism
+    envs = gym.vector.AsyncVectorEnv(
+        [make_env(env_id, seed + i, i, False, run_name, is_discrete=True) for i in range(num_envs)]
     )
 
     # Initialize Policy and Target Networks
@@ -158,51 +143,56 @@ def train_dqn():
     # TRAINING LOOP
     # =====================================================================
     obs, _ = envs.reset(seed=seed)
-    obs = np.array(obs)
+    obs = np.asarray(obs)
 
     episode_rewards = []
-    current_ep_reward = 0
+    current_ep_rewards = np.zeros(num_envs)
     episode_count = 0
 
     # Metric tracking for periodic logging
     recent_losses = deque(maxlen=1000)
     recent_q_values = deque(maxlen=1000)
     train_start_time = time.time()
-    last_log_step = start_step
 
     print("  Step         | Epsilon | Loss     | Avg Q   | Buffer  | Ep Reward | Avg(10)")
     print("  " + "-" * 80)
 
-    for global_step in range(start_step, total_timesteps):
+    global_step = start_step
+    while global_step < total_timesteps:
         # 1. Epsilon Decay
         epsilon = max(epsilon_end, epsilon_start - global_step / epsilon_decay)
 
-        # 2. Select Action
+        # 2. Select Action (batched across all envs)
         obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
         with torch.no_grad(), autocast(enabled=use_amp):
             action = policy_net.get_action(obs_tensor, epsilon, device)
         action_np = action.cpu().numpy()
 
-        # 3. Environment Step
+        # 3. Environment Step (parallel across num_envs processes)
         next_obs, rewards, terminations, truncations, infos = envs.step(action_np)
         next_obs = np.asarray(next_obs)
         dones = np.logical_or(terminations, truncations)
 
-        current_ep_reward += rewards[0]
-        if dones[0]:
-            episode_rewards.append(current_ep_reward)
-            episode_count += 1
-            avg_reward = np.mean(episode_rewards[-10:])
-            print(f"  {global_step:>13,} | {epsilon:.3f}   | "
-                  f"{'---':>8s} | {'---':>7s} | {len(buffer):>7,} | "
-                  f"{current_ep_reward:>9.1f} | {avg_reward:>7.1f}")
-            current_ep_reward = 0
+        # 4. Store transitions from ALL envs in the replay buffer
+        for i in range(num_envs):
+            buffer.push(obs[i], action_np[i], rewards[i], next_obs[i], dones[i])
 
-        # 4. Store in Buffer
-        buffer.push(obs[0], action_np[0], rewards[0], next_obs[0], dones[0])
+        # Track episode rewards for each env independently
+        current_ep_rewards += rewards
+        for i in range(num_envs):
+            if dones[i]:
+                episode_rewards.append(current_ep_rewards[i])
+                episode_count += 1
+                avg_reward = np.mean(episode_rewards[-10:])
+                print(f"  {global_step:>13,} | {epsilon:.3f}   | "
+                      f"{'---':>8s} | {'---':>7s} | {len(buffer):>7,} | "
+                      f"{current_ep_rewards[i]:>9.1f} | {avg_reward:>7.1f}")
+                current_ep_rewards[i] = 0
+
         obs = next_obs
+        global_step += num_envs
 
-        # 5. Train -- gradient_steps updates per env step to maximise GPU utilisation
+        # 5. Train -- gradient_steps updates per env step
         if global_step >= start_training_step and len(buffer) >= batch_size:
             for _ in range(gradient_steps):
                 b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
@@ -236,11 +226,11 @@ def train_dqn():
                 recent_q_values.append(q_values.mean().item())
 
         # 6. Update Target Network
-        if global_step % target_update_freq == 0:
+        if global_step % target_update_freq < num_envs:
             target_net.load_state_dict(policy_net.state_dict())
 
         # 7. Periodic training metrics log
-        if global_step > 0 and global_step % log_freq == 0 and recent_losses:
+        if global_step % log_freq < num_envs and recent_losses and global_step > start_step:
             elapsed = time.time() - train_start_time
             steps_per_sec = (global_step - start_step) / max(elapsed, 1)
             ms_per_step = 1000 / max(steps_per_sec, 1)
@@ -255,7 +245,7 @@ def train_dqn():
                   f"[{pct:>5.1f}% | {steps_per_sec:,.0f} sps | {ms_per_step:.2f} ms/step]")
 
         # 8. Save Checkpoint
-        if global_step > 0 and global_step % save_freq == 0:
+        if global_step % save_freq < num_envs and global_step > start_step:
             os.makedirs(f"models/{run_name}", exist_ok=True)
             torch.save(policy_net.state_dict(), f"models/{run_name}/dqn_step_{global_step}.pth")
             print(f"  >> [SAVE] Checkpoint saved: models/{run_name}/dqn_step_{global_step}.pth")
