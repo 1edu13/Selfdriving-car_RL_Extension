@@ -220,7 +220,7 @@ def train_dqn():
 
                 """
                 Note: scale is used for an optimization to use FP16 gradients in order to perform better in GPU-based training.
-                 In FP32, the loss is calculated as:
+                 In FP32, the loss is calculated  as:
                  
                 optimizer.zero_grad()
                 loss.backward()
