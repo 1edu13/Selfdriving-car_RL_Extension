@@ -71,12 +71,12 @@ def train_dqn():
     # Network hyperparameters
     learning_rate = 1e-4              # Lower LR for better stability with DQN
     buffer_capacity = 200_000         # 200K transitions -- fits easily in 32GB RAM
-    batch_size = 512                  # Optimized for 4GB VRAM with single CNN forward/backward
+    batch_size = 256                  # Optimized for 4GB VRAM with single CNN forward/backward
     gamma = 0.99                      # Discount factor
     target_update_freq = 5000         # Hard update target network every 5K steps
     start_training_step = 50_000      # Random warmup phase to fill buffer with diverse data
-    gradient_steps = 2                # GPU updates per env step (saturates GPU)
-    num_envs = 16                     # Parallel envs on separate CPU cores via AsyncVectorEnv (saturates CPU)
+    gradient_steps = 1                # GPU updates per env step (1:1 ratio with single env)
+    num_envs = 4                      # Parallel envs on separate CPU cores via AsyncVectorEnv
 
     # Epsilon-Greedy exploration parameters
     epsilon_start = 1.0               # Start fully random
