@@ -23,7 +23,7 @@ from agents.td3_agent import Actor as TD3Actor
 # =====================================================================
 # CONFIGURATION -- Edit these paths directly!
 # =====================================================================
-MODEL_PATH = r"C:\Users\emped\Downloads\td3_actor_step_400000.pth"
+MODEL_PATH = "models/td3_baseline/td3_actor_final.pth"
 NUM_EPISODES = 20
 SEED = 42
 RECORD_VIDEO = True

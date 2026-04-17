@@ -35,6 +35,10 @@ class ReplayBuffer:
 
     def push(self, state, action, reward, next_state, done):
         """Store a single transition. Overwrites oldest entry when full."""
+        # Force storing states as uint8 to save 75% RAM
+        state = np.asarray(state, dtype=np.uint8)
+        next_state = np.asarray(next_state, dtype=np.uint8)
+        
         data = (state, action, reward, next_state, done)
         if len(self.buffer) < self.capacity:
             self.buffer.append(data)
@@ -46,9 +50,9 @@ class ReplayBuffer:
         """Sample a random batch of transitions. Returns numpy arrays."""
         batch = random.sample(self.buffer, batch_size)
         state, action, reward, next_state, done = zip(*batch)
-        return (np.array(state), np.array(action),
+        return (np.array(state, dtype=np.uint8), np.array(action),
                 np.array(reward, dtype=np.float32),
-                np.array(next_state),
+                np.array(next_state, dtype=np.uint8),
                 np.array(done, dtype=np.float32))
 
     def __len__(self):

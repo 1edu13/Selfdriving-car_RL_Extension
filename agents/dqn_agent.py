@@ -70,10 +70,11 @@ class DQNAgent(nn.Module):
         Returns:
             q_values: Tensor of shape (Batch, num_actions)
         """
-        # Normalize input pixel values to [0, 1] range
-        hidden = self.network(x / 255.0)
+        # Normalize input pixel values to [0, 1] range (and ensure it is float)
+        hidden = self.network(x.float() / 255.0)
         q_values = self.q_head(hidden)
         return q_values
+
 
     def get_action(self, x, epsilon=0.0, device="cpu"):
         """

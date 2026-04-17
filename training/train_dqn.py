@@ -163,7 +163,7 @@ def train_dqn():
         epsilon = max(epsilon_end, epsilon_start - global_step / epsilon_decay)
 
         # 2. Select Action (batched across all envs)
-        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
+        obs_tensor = torch.as_tensor(obs, dtype=torch.uint8, device=device)
         with torch.no_grad(), autocast(enabled=use_amp):
             action = policy_net.get_action(obs_tensor, epsilon, device)
         action_np = action.cpu().numpy()
@@ -197,10 +197,11 @@ def train_dqn():
             for _ in range(gradient_steps):
                 b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
 
-                b_obs = torch.as_tensor(b_obs, dtype=torch.float32, device=device)
+                #Convert to torch tensors
+                b_obs = torch.as_tensor(b_obs, dtype=torch.uint8, device=device)
                 b_actions = torch.as_tensor(b_actions, dtype=torch.int64, device=device).unsqueeze(1)
                 b_rewards = torch.as_tensor(b_rewards, device=device)
-                b_next_obs = torch.as_tensor(b_next_obs, dtype=torch.float32, device=device)
+                b_next_obs = torch.as_tensor(b_next_obs, dtype=torch.uint8, device=device)
                 b_dones = torch.as_tensor(b_dones, device=device)
 
                 with autocast(enabled=use_amp):
@@ -211,11 +212,28 @@ def train_dqn():
                         next_q_values = target_net(b_next_obs)
                         max_next_q_values = next_q_values.max(1)[0]
 
+                    # Bellman equation
                     expected_state_action_values = b_rewards + (gamma * max_next_q_values * (1 - b_dones))
+
+                    # Loss function
                     loss = loss_fn(state_action_values, expected_state_action_values)
 
+                """
+                Note: scale is used for an optimization to use FP16 gradients in order to perform better in GPU-based training.
+                 In FP32, the loss is calculated as:
+                 
                 optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(policy_net.parameters(), 1.0)
+                optimizer.step()
+                
+                """
+
+                # Reset the gradients for prevent gradient accumulation)
+                optimizer.zero_grad(set_to_none=True)
+                # Backpropagation, calculate how much each weight contributes to the loss
                 scaler.scale(loss).backward()
+                # We can not apply a correction here due to the way the loss is scaled, we need to unscale
                 scaler.unscale_(optimizer)
                 nn.utils.clip_grad_value_(policy_net.parameters(), 100)
                 scaler.step(optimizer)
