@@ -31,6 +31,7 @@ MODELS_TO_TRAIN = [
         "timesteps": "1,000,000",
         "description": "Deep Q-Network (discrete actions)",
     },
+    """
     {
         "name": "TD3",
         "script": "training/train_td3.py",
@@ -49,6 +50,7 @@ MODELS_TO_TRAIN = [
         "timesteps": "1,500,000",
         "description": "Proximal Policy Optimization (on-policy)",
     },
+    """
 ]
 
 
