@@ -68,19 +68,19 @@ def train_td3():
 
     total_timesteps = 600_000
     save_freq = 100_000
-    log_freq = 10_000
+    log_freq = 10_000 ## Todo no se que es
     resume_from_checkpoint = False
 
     learning_rate = 3e-4
     buffer_capacity = 200_000
     batch_size = 256
     gamma = 0.99
-    tau = 0.005
+    tau = 0.005 ## Todo Explicar
     start_training_step = 25_000
-    gradient_steps = 1                # GPU updates per env step (1:1 ratio with single env)
+    gradient_steps = 4                # GPU updates per env step (Optimizacion: UTD ratio)
     num_envs = 4                      # Parallel envs on separate CPU cores via AsyncVectorEnv
 
-    exploration_noise = 0.1
+    exploration_noise = 0.1           # Todo Explicar en el report
     policy_noise = 0.2
     noise_clip = 0.5
     policy_delay = 2
@@ -121,6 +121,11 @@ def train_td3():
     actor = Actor(action_dim=3).to(device)
     critic = Critic(action_dim=3).to(device)
 
+    # Optimizacion: PyTorch 2.0 torch.compile para fusionar operaciones
+    if int(torch.__version__.split('.')[0]) >= 2:
+        actor = torch.compile(actor)
+        critic = torch.compile(critic)
+
     start_step = 0
     if resume_from_checkpoint and os.path.exists(f"models/{run_name}"):
         chkp_files = [f for f in os.listdir(f"models/{run_name}") if f.startswith("td3_actor_step_")]
@@ -131,6 +136,7 @@ def train_td3():
             critic.load_state_dict(torch.load(f"models/{run_name}/td3_critic_step_{latest_step}.pth", map_location=device))
             print(f"  >> Checkpoint found! Resuming from step {latest_step:,}\n")
 
+    # Todo Las target son copias que se uitlizan para el entrenamiento del las current, las que de verdad queremos entrenar
     actor_target = copy.deepcopy(actor)
     critic_target = copy.deepcopy(critic)
     actor_optimizer = optim.Adam(actor.parameters(), lr=learning_rate)
@@ -168,6 +174,7 @@ def train_td3():
                 obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
                 action_tensor = actor(obs_tensor)
                 noise = torch.normal(0, exploration_noise, size=action_tensor.shape, device=device)
+                #Añadimos noise a las acciones
                 action_tensor = action_tensor + noise
                 action_np = action_tensor.cpu().numpy()
                 action_np = np.clip(action_np, action_low, action_high)
@@ -200,11 +207,12 @@ def train_td3():
             for _ in range(gradient_steps):
                 b_obs, b_actions, b_rewards, b_next_obs, b_dones = buffer.sample(batch_size)
 
-                b_obs = torch.as_tensor(b_obs, dtype=torch.float32, device=device)
-                b_actions = torch.as_tensor(b_actions, dtype=torch.float32, device=device)
-                b_rewards = torch.as_tensor(b_rewards, device=device).unsqueeze(1)
-                b_next_obs = torch.as_tensor(b_next_obs, dtype=torch.float32, device=device)
-                b_dones = torch.as_tensor(b_dones, device=device).unsqueeze(1)
+                # Optimizacion: Transferencias asíncronas a la GPU
+                b_obs = torch.tensor(b_obs, dtype=torch.float32, pin_memory=True).to(device, non_blocking=True)
+                b_actions = torch.tensor(b_actions, dtype=torch.float32, pin_memory=True).to(device, non_blocking=True)
+                b_rewards = torch.tensor(b_rewards, dtype=torch.float32, pin_memory=True).unsqueeze(1).to(device, non_blocking=True)
+                b_next_obs = torch.tensor(b_next_obs, dtype=torch.float32, pin_memory=True).to(device, non_blocking=True)
+                b_dones = torch.tensor(b_dones, dtype=torch.float32, pin_memory=True).unsqueeze(1).to(device, non_blocking=True)
 
                 # --- Critic Update ---
                 with torch.no_grad(), autocast(enabled=use_amp):
@@ -217,10 +225,12 @@ def train_td3():
                     smoothed_next_action = torch.max(torch.min(smoothed_next_action, t_high), t_low)
                     target_q1, target_q2 = critic_target(b_next_obs, smoothed_next_action)
                     target_q = torch.min(target_q1, target_q2)
+                    # Bellman equation
                     target_q = b_rewards + gamma * target_q * (1 - b_dones)
 
                 with autocast(enabled=use_amp):
                     current_q1, current_q2 = critic(b_obs, b_actions)
+                    # Loss funtion
                     critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
 
                 critic_optimizer.zero_grad()
@@ -245,11 +255,11 @@ def train_td3():
 
                     recent_actor_losses.append(actor_loss.item())
 
-                    # Soft Updates
+                    # Soft Updates (Optimizacion: lerp_ in-place)
                     for param, target_param in zip(critic.parameters(), critic_target.parameters()):
-                        target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+                        target_param.data.lerp_(param.data, tau)
                     for param, target_param in zip(actor.parameters(), actor_target.parameters()):
-                        target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+                        target_param.data.lerp_(param.data, tau)
 
         # 5. Periodic metrics log
         if global_step % log_freq < num_envs and recent_critic_losses and global_step > start_step:

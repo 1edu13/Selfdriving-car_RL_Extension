@@ -88,7 +88,7 @@ def train_sac():
     gamma = 0.99
     tau = 0.005
     start_training_step = 25_000
-    target_entropy = -3.0
+    target_entropy = -3.0             # Todo explicar
     gradient_steps = 1                # GPU updates per env step (1:1 ratio with single env)
     num_envs = 4                      # Parallel envs on separate CPU cores via AsyncVectorEnv
 
@@ -221,6 +221,7 @@ def train_sac():
                     next_action, next_log_prob = actor.get_action(b_next_obs)
                     target_q1, target_q2 = critic_target(b_next_obs, next_action)
                     target_q = torch.min(target_q1, target_q2) - alpha * next_log_prob
+                    # Bellman equation
                     target_q = b_rewards + gamma * target_q * (1 - b_dones)
 
                 with autocast(enabled=use_amp):
@@ -239,6 +240,7 @@ def train_sac():
                     curr_action, curr_log_prob = actor.get_action(b_obs)
                     curr_q1, curr_q2 = critic(b_obs, curr_action)
                     curr_q = torch.min(curr_q1, curr_q2)
+                    # Loss function
                     actor_loss = (alpha * curr_log_prob - curr_q).mean()
 
                 actor_optimizer.zero_grad()
