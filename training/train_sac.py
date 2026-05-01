@@ -240,7 +240,7 @@ def train_sac():
                     curr_action, curr_log_prob = actor.get_action(b_obs)
                     curr_q1, curr_q2 = critic(b_obs, curr_action)
                     curr_q = torch.min(curr_q1, curr_q2)
-                    # Loss function
+                    # Loss function.
                     actor_loss = (alpha * curr_log_prob - curr_q).mean()
 
                 actor_optimizer.zero_grad()
