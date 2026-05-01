@@ -89,7 +89,7 @@ def train_sac():
     tau = 0.005
     start_training_step = 25_000
     target_entropy = -3.0             # Todo explicar
-    gradient_steps = 1                # GPU updates per env step (1:1 ratio with single env)
+    gradient_steps = 4                # GPU updates per env step (1:1 ratio with single env)
     num_envs = 4                      # Parallel envs on separate CPU cores via AsyncVectorEnv
 
     # =====================================================================
@@ -123,6 +123,16 @@ def train_sac():
 
     actor = Actor(action_dim=3).to(device)
     critic = Critic(action_dim=3).to(device)
+
+    try:
+        # Intento de compilación JIT (optimización de PyTorch 2.0+ para velocidad pura)
+        # Nota: En Windows a veces puede fallar dependiendo del compilador C++ local
+        if hasattr(torch, "compile"):
+            actor = torch.compile(actor)
+            critic = torch.compile(critic)
+            print("  >> PyTorch JIT Compile habilitado para mayor velocidad.\n")
+    except Exception as e:
+        print(f"  >> PyTorch Compile no disponible. Usando modelos estándar. ({e})\n")
 
     start_step = 0
     if resume_from_checkpoint and os.path.exists(f"models/{run_name}"):
@@ -236,6 +246,10 @@ def train_sac():
                 scaler_critic.update()
 
                 # --- Actor Update ---
+                # Congelar el Critic para no calcular gradientes innecesarios por su CNN (mejora rendimiento y VRAM)
+                for param in critic.parameters():
+                    param.requires_grad = False
+
                 with autocast(enabled=use_amp):
                     curr_action, curr_log_prob = actor.get_action(b_obs)
                     curr_q1, curr_q2 = critic(b_obs, curr_action)
@@ -248,6 +262,10 @@ def train_sac():
                 scaler_actor.step(actor_optimizer)
                 scaler_actor.update()
 
+                # Descongelar el Critic para su próxima iteración de actualización
+                for param in critic.parameters():
+                    param.requires_grad = True
+
                 # --- Alpha Update ---
                 alpha_loss = -(log_alpha * (curr_log_prob + target_entropy).detach()).mean()
                 alpha_optimizer.zero_grad()
@@ -256,7 +274,8 @@ def train_sac():
 
                 # --- Soft Updates ---
                 for param, target_param in zip(critic.parameters(), critic_target.parameters()):
-                    target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+                    # lerp_ realiza interpolación lineal inplace (ahorra creación de tensores y es mucho más rápido)
+                    target_param.data.lerp_(param.data, tau)
 
                 # Track metrics (last grad step)
                 recent_critic_losses.append(critic_loss.item())

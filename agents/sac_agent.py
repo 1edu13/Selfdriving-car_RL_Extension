@@ -109,8 +109,11 @@ class Actor(nn.Module):
         # Because we squashed the distribution with Tanh, we MUST correct the probability density.
         # This is done using the Jacobian of the Tanh transformation.
         log_prob = normal.log_prob(x_t)
-        # log(1 - tanh(x)^2) gives the correction. We add epsilon to prevent log(0) if action is close to -1 or 1.
-        log_prob -= torch.log(1 - action.pow(2) + epsilon)
+        
+        # Matemáticamente equivalente a: log_prob -= torch.log(1 - action.pow(2) + epsilon)
+        # Sin embargo, esta versión es estable numéricamente incluso en Float16 (AMP) cuando x_t es grande.
+        # Usa la identidad matemática: 1 - tanh(x)^2 = 4 / (exp(x) + exp(-x))^2
+        log_prob -= (2.0 * (np.log(2.0) - x_t - F.softplus(-2.0 * x_t)))
         
         # Sum the log probabilities across all action dimensions to get the total log_prob for this step
         log_prob = log_prob.sum(1, keepdim=True)
