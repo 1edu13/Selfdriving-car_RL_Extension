@@ -245,6 +245,11 @@ def train_td3():
 
                 # --- Delayed Actor Update (every policy_delay critic updates) ---
                 if grad_step_counter % policy_delay == 0:
+                    # Congelar el Critic para no calcular gradientes innecesarios por su CNN
+                    # Solo necesitamos el forward de Q1 para guiar al Actor, no su backward
+                    for param in critic.parameters():
+                        param.requires_grad = False
+
                     with autocast(enabled=use_amp):
                         actor_loss = -critic.q1(b_obs, actor(b_obs)).mean()
 
@@ -252,6 +257,10 @@ def train_td3():
                     scaler_actor.scale(actor_loss).backward()
                     scaler_actor.step(actor_optimizer)
                     scaler_actor.update()
+
+                    # Descongelar el Critic para su próxima actualización
+                    for param in critic.parameters():
+                        param.requires_grad = True
 
                     recent_actor_losses.append(actor_loss.item())
 

@@ -90,7 +90,8 @@ def train_sac():
     start_training_step = 25_000
     target_entropy = -3.0             # Todo explicar
     gradient_steps = 4                # GPU updates per env step (1:1 ratio with single env)
-    num_envs = 4                      # Parallel envs on separate CPU cores via AsyncVectorEnv
+    num_envs = 4                      # Parallel envs on separate CPU cores via AsyncVectorEnv 
+                                      # We could set 4 or 8 (could be more agresive, but slower)
 
     # =====================================================================
     # SETUP
